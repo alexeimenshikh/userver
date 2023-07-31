@@ -228,6 +228,7 @@ Request& Request::url(const std::string& url) & {
   pimpl_->easy().set_url(url, ec);
   if (ec) throw BadArgumentException(ec, "Bad URL", url, {});
 
+  pimpl_->easy().set_http_auth(curl::easy::auth_any, false);
   pimpl_->SetDestinationMetricNameAuto(
       USERVER_NAMESPACE::http::ExtractMetaTypeFromUrl(url));
   return *this;
