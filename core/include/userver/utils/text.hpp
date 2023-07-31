@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include <boost/serialization/nvp.hpp>
 #include <boost/multiprecision/cpp_dec_float.hpp>
 
 USERVER_NAMESPACE_BEGIN
