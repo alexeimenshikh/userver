@@ -86,7 +86,8 @@ class SearchState final {
   std::variant<Key, Value> key_or_result_;
 };
 
-inline constexpr std::size_t kInvalidSize = -1;
+inline constexpr std::size_t kInvalidSize =
+    std::numeric_limits<std::size_t>::max();
 
 template <typename Payload>
 inline constexpr bool kFitsInStringOrPayload =
@@ -153,7 +154,7 @@ class SearchState<std::string_view, Value,
   }
 
   constexpr void SetValue(Value value) noexcept {
-    state_ = StringOrPayload{value};
+    state_ = StringOrPayload<Value>{value};
   }
 
   [[nodiscard]] constexpr std::optional<Value> Extract() noexcept {
@@ -464,7 +465,7 @@ class CaseSecondDescriber final {
 /// @brief Bidirectional unordered map for trivial types, including string
 /// literals; could be efficiently used as a unordered non-bidirectional map.
 ///
-/// @snippet shared/src/utils/trivial_map_test.cpp  sample string bimap
+/// @snippet universal/src/utils/trivial_map_test.cpp  sample string bimap
 ///
 /// utils::TrivialBiMap and utils::TrivialSet are known to outperform
 /// std::unordered_map if:
@@ -479,7 +480,7 @@ class CaseSecondDescriber final {
 /// The same story with integral or enum mappings - compiler optimizes them
 /// into a switch and it usually takes O(1) to find the match.
 ///
-/// @snippet shared/src/utils/trivial_map_test.cpp  sample bidir bimap
+/// @snippet universal/src/utils/trivial_map_test.cpp  sample bidir bimap
 ///
 /// For a single value Case statements see @ref utils::TrivialSet.
 template <typename BuilderFunc>
@@ -608,6 +609,9 @@ class TrivialBiMap final {
   const BuilderFunc func_;
 };
 
+template <typename BuilderFunc>
+TrivialBiMap(BuilderFunc) -> TrivialBiMap<BuilderFunc>;
+
 /// @ingroup userver_containers
 ///
 /// @brief Unordered set for trivial types, including string literals.
@@ -662,6 +666,9 @@ class TrivialSet final {
  private:
   const BuilderFunc func_;
 };
+
+template <typename BuilderFunc>
+TrivialSet(BuilderFunc) -> TrivialSet<BuilderFunc>;
 
 /// @brief Parses and returns whatever is specified by `map` from a
 /// `formats::*::Value`.

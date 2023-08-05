@@ -13,7 +13,7 @@ namespace ugrpc::server::middlewares::deadline_propagation {
 
 /// @ingroup userver_components userver_base_classes
 ///
-/// @brief Component for gRPC server logging
+/// @brief Component for gRPC server deadline propagation
 
 class Component final : public MiddlewareComponentBase {
  public:

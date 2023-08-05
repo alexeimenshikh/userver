@@ -22,7 +22,6 @@
 #include <userver/utils/assert.hpp>
 #include <userver/utils/async.hpp>
 #include <userver/utils/encoding/hex.hpp>
-#include <userver/utils/from_string.hpp>
 #include <userver/utils/overloaded.hpp>
 #include <userver/utils/rand.hpp>
 #include <utils/impl/assert_extra.hpp>
@@ -41,7 +40,10 @@ constexpr int kEBMaxPower = 5;
 /// Base time for exponential backoff algorithm
 constexpr auto kEBBaseTime = std::chrono::milliseconds{25};
 /// Least http code that we treat as bad for exponential backoff algorithm
-constexpr long kLeastBadHttpCodeForEB = 500;
+constexpr Status kLeastBadHttpCodeForEB{500};
+/// Least http code the the downstream service can use to report propagated
+/// deadline expiration
+constexpr Status kLeastHttpCodeForDeadlineExpired{400};
 
 constexpr Status kFakeHttpErrorCode{599};
 
@@ -290,6 +292,14 @@ void RequestState::proxy_auth_type(curl::easy::proxyauth_t value) {
   easy().set_proxy_auth(value);
 }
 
+void RequestState::http_auth_type(curl::easy::httpauth_t value, bool auth_only,
+                                  std::string_view user,
+                                  std::string_view password) {
+  easy().set_http_auth(value, auth_only);
+  easy().set_user(std::string{user}.c_str());
+  easy().set_password(std::string{password}.c_str());
+}
+
 void RequestState::Cancel() {
   // We can not call `retry_.timer.reset();` here because of data race
   is_cancelled_ = true;
@@ -383,14 +393,7 @@ void RequestState::on_completed(std::shared_ptr<RequestState> holder,
 
   const auto status_code = static_cast<Status>(easy.get_response_code());
 
-  if (holder->deadline_expired_ || holder->deadline_.IsReached()) {
-    // The most probable cause is that the propagated deadline caused
-    // the downstream service to stop handling the request.
-    holder->deadline_expired_ = true;
-    holder->WithRequestStats(
-        [](RequestStats& stats) { stats.AccountCancelledByDeadline(); });
-    err = std::error_code{curl::errc::EasyErrorCode::kOperationTimedout};
-  }
+  holder->CheckResponseDeadline(err, status_code);
 
   if (holder->testsuite_config_ && !err) {
     const auto& headers = holder->response()->headers();
@@ -463,10 +466,6 @@ void RequestState::on_completed(std::shared_ptr<RequestState> holder,
   // it is unsafe to touch any content of holder after this point!
 }
 
-bool RequestState::IsStreamBody() const {
-  return !!std::get_if<StreamData>(&data_);
-}
-
 void RequestState::on_retry(std::shared_ptr<RequestState> holder,
                             std::error_code err) {
   UASSERT(holder);
@@ -480,7 +479,7 @@ void RequestState::on_retry(std::shared_ptr<RequestState> holder,
   // - if failed to reach server, and we should not retry on fails
   // - if this request was cancelled
   const bool not_need_retry =
-      (!err && holder->easy().get_response_code() < kLeastBadHttpCodeForEB) ||
+      (!err && !holder->ShouldRetryResponse()) ||
       (holder->retry_.current >= holder->retry_.retries) ||
       (err && !holder->retry_.on_fails) || holder->is_cancelled_.load();
 
@@ -751,6 +750,54 @@ void RequestState::HandleDeadlineAlreadyPassed() {
   std::visit(visitor, data_);
 }
 
+void RequestState::CheckResponseDeadline(std::error_code& err,
+                                         Status status_code) {
+  const std::chrono::microseconds attempt_time{easy().get_total_time_usec()};
+
+  if (deadline_expired_ ||
+      (deadline_propagation_config_.update_header &&
+       timeout_updated_by_deadline_ && attempt_time >= effective_timeout_)) {
+    // The most probable cause is IsDeadlineExpiredResponse, case (1).
+    // Even if not, the ResponseFuture already has thrown or is preparing
+    // to throw a CancelledException, so reflect it here for consistency.
+    deadline_expired_ = true;
+    err = std::error_code{curl::errc::EasyErrorCode::kOperationTimedout};
+    WithRequestStats(
+        [](RequestStats& stats) { stats.AccountCancelledByDeadline(); });
+  } else if (!err && IsDeadlineExpiredResponse(status_code)) {
+    // IsDeadlineExpiredResponse, case (2) happened.
+    err = std::error_code{curl::errc::EasyErrorCode::kOperationTimedout};
+  }
+}
+
+bool RequestState::IsDeadlineExpiredResponse(Status status_code) {
+  // There are two cases where deadline expires in the downstream service:
+  //
+  // 1. We used all of our own deadline for the attempt. Our deadline and
+  // the downstream service deadline have expired at about the same time.
+  // This case SHOULD NOT be retried.
+  //
+  // 2. We set a "small" timeout for the attempt that is less than our
+  // own deadline. The downstream service deadline (taken from the
+  // timeout) has expired, but deadline of the current task has not yet
+  // expired. This case SHOULD be retried.
+  return (deadline_propagation_config_.update_header &&
+          status_code >= kLeastHttpCodeForDeadlineExpired &&
+          response_->headers().contains(
+              USERVER_NAMESPACE::http::headers::kXYaTaxiDeadlineExpired));
+}
+
+bool RequestState::ShouldRetryResponse() {
+  const auto status_code = static_cast<Status>(easy().get_response_code());
+
+  if (status_code >= kLeastBadHttpCodeForEB) return true;
+
+  return status_code >= kLeastBadHttpCodeForEB ||
+         // See IsDeadlineExpiredResponse. We return 'true' for both cases here
+         // and check case (1) separately in on_retry.
+         IsDeadlineExpiredResponse(status_code);
+}
+
 void RequestState::AccountResponse(std::error_code err) {
   const auto attempts = retry_.current;
 
@@ -758,7 +805,7 @@ void RequestState::AccountResponse(std::error_code err) {
       std::chrono::duration_cast<std::chrono::microseconds>(
           easy().time_to_start());
 
-  WithRequestStats([&, this](RequestStats& stats) {
+  WithRequestStats([this, err, attempts, time_to_start](RequestStats& stats) {
     stats.StoreTimeToStart(time_to_start);
     if (err)
       stats.FinishEc(err, attempts);

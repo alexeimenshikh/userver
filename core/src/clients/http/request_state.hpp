@@ -52,11 +52,6 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
 
   using Queue = concurrent::StringStreamQueue;
 
-  enum class AsyncType {
-    kFullyBuffered,
-    kStreamed,
-  };
-
   /// Perform async http request
   engine::Future<std::shared_ptr<Response>> async_perform(
       utils::impl::SourceLocation location =
@@ -94,6 +89,9 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
   void proxy(const std::string& value);
   /// sets proxy auth type to use
   void proxy_auth_type(curl::easy::proxyauth_t value);
+  /// sets proxy auth type and credentials to use
+  void http_auth_type(curl::easy::httpauth_t value, bool auth_only,
+                      std::string_view user, std::string_view password);
 
   /// get timeout value in milliseconds
   long timeout() const { return original_timeout_.count(); }
@@ -120,8 +118,6 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
   void SetDeadlinePropagationConfig(
       const impl::DeadlinePropagationConfig& deadline_propagation_config);
 
-  std::shared_ptr<impl::EasyWrapper> easy_wrapper() { return easy_; }
-
   curl::easy& easy() { return easy_->Easy(); }
   const curl::easy& easy() const { return easy_->Easy(); }
   std::shared_ptr<Response> response() const { return response_; }
@@ -143,7 +139,7 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
   /// header function curl callback
   static size_t on_header(void* ptr, size_t size, size_t nmemb, void* userdata);
 
-  /// certifiacte function curl callback
+  /// certificate function curl callback
   static curl::native::CURLcode on_certificate_request(void* curl, void* sslctx,
                                                        void* userdata) noexcept;
 
@@ -160,6 +156,9 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
       std::chrono::milliseconds rtt_estimate = {});
   void UpdateTimeoutHeader();
   void HandleDeadlineAlreadyPassed();
+  void CheckResponseDeadline(std::error_code& err, Status status_code);
+  bool IsDeadlineExpiredResponse(Status status_code);
+  bool ShouldRetryResponse();
 
   const std::string& GetLoggedOriginalUrl() const noexcept;
 
@@ -178,7 +177,6 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
   void WithRequestStats(const Func& func);
 
   void ResolveTargetAddress(clients::dns::Resolver& resolver);
-  bool IsStreamBody() const;
 
   /// curl handler wrapper
   std::shared_ptr<impl::EasyWrapper> easy_;

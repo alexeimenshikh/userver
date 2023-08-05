@@ -486,9 +486,9 @@ TEST_F(LoggingTest, LogLimitedDisabled) {
 }
 
 TEST_F(LoggingTest, CustomLoggerLevel) {
-  auto sstream_data = std::make_shared<LoggingSinkWithStream>();
-  auto logger = MakeNamedStreamLogger("other-logger", sstream_data,
-                                      logging::Format::kTskv);
+  const auto logger_data =
+      MakeNamedStreamLogger("other-logger", logging::Format::kTskv);
+  const auto& logger = logger_data.logger;
 
   // LOG_*_TO() must use its own log level, not default logger's one
   SetDefaultLoggerLevel(logging::Level::kCritical);
@@ -500,11 +500,11 @@ TEST_F(LoggingTest, CustomLoggerLevel) {
   LOG_LIMITED_DEBUG_TO(*logger) << "most";
   logging::LogFlush(*logger);
 
-  auto result = sstream_data->sstream.str();
-  EXPECT_NE(result.find("test"), std::string::npos);
-  EXPECT_NE(result.find("mest"), std::string::npos);
-  EXPECT_EQ(result.find("tost"), std::string::npos);
-  EXPECT_EQ(result.find("most"), std::string::npos);
+  const auto result = logger_data.stream.str();
+  EXPECT_THAT(result, testing::HasSubstr("test"));
+  EXPECT_THAT(result, testing::HasSubstr("mest"));
+  EXPECT_THAT(result, testing::Not(testing::HasSubstr("tost")));
+  EXPECT_THAT(result, testing::Not(testing::HasSubstr("most")));
 }
 
 TEST_F(LoggingTest, NullLogger) {
@@ -539,39 +539,22 @@ TEST_F(LoggingTest, Noexceptness) {
     EXPECT_TRUE(noexcept(logging::LogHelper(logging::GetNullLogger(),
                                             logging::Level::kCritical)));
 
-    EXPECT_TRUE(noexcept(logging::LogHelper(logging::GetNullLogger(),
-                                            logging::Level::kCritical)));
+    const auto logger_ptr = logging::MakeNullLogger();
+    EXPECT_TRUE(
+        noexcept(logging::LogHelper(logger_ptr, logging::Level::kCritical)));
 
     EXPECT_TRUE(noexcept(
         logging::LogHelper(logging::LoggerPtr{}, logging::Level::kCritical)));
 
-    EXPECT_TRUE(noexcept(LOG_TRACE_TO(logging::GetNullLogger())));
-    EXPECT_TRUE(noexcept(LOG_DEBUG_TO(logging::GetNullLogger())));
-    EXPECT_TRUE(noexcept(LOG_INFO_TO(logging::GetNullLogger())));
-    EXPECT_TRUE(noexcept(LOG_WARNING_TO(logging::GetNullLogger())));
-    EXPECT_TRUE(noexcept(LOG_ERROR_TO(logging::GetNullLogger())));
-    EXPECT_TRUE(noexcept(LOG_CRITICAL_TO(logging::GetNullLogger())));
+    EXPECT_TRUE(noexcept(
+        std::declval<const logging::impl::StaticLogEntry&>().ShouldNotLog(
+            logging::GetDefaultLogger(), logging::Level::kInfo)));
+    EXPECT_TRUE(noexcept(
+        USERVER_IMPL_LOG_TO(logging::GetNullLogger(), logging::Level::kInfo)));
 
-    EXPECT_TRUE(noexcept(LOG_TRACE_TO(logging::GetNullLogger()) << "Test"));
-    EXPECT_TRUE(noexcept(LOG_DEBUG_TO(logging::GetNullLogger()) << "Test"));
-    EXPECT_TRUE(noexcept(LOG_INFO_TO(logging::GetNullLogger()) << "Test"));
-    EXPECT_TRUE(noexcept(LOG_WARNING_TO(logging::GetNullLogger()) << "Test"));
-    EXPECT_TRUE(noexcept(LOG_ERROR_TO(logging::GetNullLogger()) << "Test"));
-    EXPECT_TRUE(noexcept(LOG_CRITICAL_TO(logging::GetNullLogger()) << "Test"));
-
-    using logging::LogExtra;
-    EXPECT_TRUE(noexcept(LOG_TRACE_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
-    EXPECT_TRUE(noexcept(LOG_DEBUG_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
-    EXPECT_TRUE(noexcept(LOG_INFO_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
-    EXPECT_TRUE(noexcept(LOG_WARNING_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
-    EXPECT_TRUE(noexcept(LOG_ERROR_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
-    EXPECT_TRUE(noexcept(LOG_CRITICAL_TO(logging::GetNullLogger())
-                         << LogExtra::Stacktrace()));
+    EXPECT_TRUE(noexcept(std::declval<logging::LogHelper&>() << "Test"));
+    EXPECT_TRUE(noexcept(std::declval<logging::LogHelper&>()
+                         << logging::LogExtra::Stacktrace()));
   }
 }
 

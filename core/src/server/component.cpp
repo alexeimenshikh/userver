@@ -124,6 +124,12 @@ properties:
                             When `false`, disables deadline propagation by default in all HTTP handlers.
                             Can be overridden by the corresponding option in server::handlers::HandlerBase.
                         defaultDescription: true
+                    deadline_expired_status_code:
+                        type: integer
+                        description: the HTTP status code to return if the request deadline expires
+                        defaultDescription: 504
+                        minimum: 400
+                        maximum: 599
             connection:
                 type: object
                 description: connection options
