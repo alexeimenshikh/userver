@@ -45,7 +45,7 @@ constexpr auto operator|(StrongTypedefOps op1, StrongTypedefOps op2) noexcept {
                           utils::UnderlyingValue(op2)};
 }
 
-/// @ingroup userver_containers
+/// @ingroup userver_universal userver_containers
 ///
 /// @brief Strong typedef for a type T.
 ///
@@ -365,11 +365,19 @@ std::string ToString(const StrongTypedef<Tag, std::string, Ops>& object) {
 }
 
 template <typename Tag, typename T, StrongTypedefOps Ops,
-          typename = std::enable_if_t<meta::kIsInteger<T>>>
+          std::enable_if_t<meta::kIsInteger<T>, bool> = true>
 std::string ToString(const StrongTypedef<Tag, T, Ops>& object) {
   impl::strong_typedef::CheckIfAllowsLogging<
       StrongTypedef<Tag, std::string, Ops>>();
   return std::to_string(object.GetUnderlying());
+}
+
+template <typename Tag, typename T, StrongTypedefOps Ops,
+          std::enable_if_t<std::is_floating_point_v<T>, bool> = true>
+std::string ToString(const StrongTypedef<Tag, T, Ops>& object) {
+  impl::strong_typedef::CheckIfAllowsLogging<
+      StrongTypedef<Tag, std::string, Ops>>();
+  return fmt::format("{}", object.GetUnderlying());
 }
 
 // Explicit casting

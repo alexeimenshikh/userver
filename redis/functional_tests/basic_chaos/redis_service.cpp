@@ -1,4 +1,3 @@
-#include <userver/testsuite/testsuite_support.hpp>
 #include <userver/utest/using_namespace_userver.hpp>  // IWYU pragma: keep
 
 #include <string>
@@ -7,14 +6,19 @@
 #include <fmt/format.h>
 
 #include <userver/clients/dns/component.hpp>
+#include <userver/clients/http/component.hpp>
 #include <userver/components/component.hpp>
 #include <userver/components/minimal_server_component_list.hpp>
+#include <userver/dynamic_config/client/component.hpp>
+#include <userver/dynamic_config/updater/component.hpp>
 #include <userver/engine/sleep.hpp>
 #include <userver/server/handlers/http_handler_base.hpp>
+#include <userver/server/handlers/tests_control.hpp>
 #include <userver/storages/redis/client.hpp>
 #include <userver/storages/redis/component.hpp>
 #include <userver/storages/secdist/component.hpp>
 #include <userver/storages/secdist/provider_component.hpp>
+#include <userver/testsuite/testsuite_support.hpp>
 #include <userver/utils/daemon_run.hpp>
 #include <userver/utils/from_string.hpp>
 
@@ -104,23 +108,15 @@ std::string KeyValue::PostValue(
   const auto& value = request.GetArg("value");
   auto redis_request =
       redis_client_->SetIfNotExist(std::string{key}, value, redis_cc_);
-  try {
-    const auto result = redis_request.Get();
-    if (!result) {
-      request.SetResponseStatus(server::http::HttpStatus::kConflict);
-      return {};
-    }
 
-    request.SetResponseStatus(server::http::HttpStatus::kCreated);
-    return std::string{value};
-  } catch (const redis::RequestFailedException& e) {
-    if (e.GetStatus() == redis::ReplyStatus::kTimeoutError) {
-      request.SetResponseStatus(server::http::HttpStatus::kServiceUnavailable);
-      return "timeout";
-    }
-
-    throw;
+  const auto result = redis_request.Get();
+  if (!result) {
+    request.SetResponseStatus(server::http::HttpStatus::kConflict);
+    return {};
   }
+
+  request.SetResponseStatus(server::http::HttpStatus::kCreated);
+  return std::string{value};
 }
 
 std::string KeyValue::DeleteValue(std::string_view key) const {
@@ -138,6 +134,10 @@ int main(int argc, char* argv[]) {
           .Append<components::DefaultSecdistProvider>()
           .Append<components::Redis>("key-value-database")
           .Append<components::TestsuiteSupport>()
-          .Append<clients::dns::Component>();
+          .Append<clients::dns::Component>()
+          .Append<components::HttpClient>()
+          .Append<server::handlers::TestsControl>()
+          .Append<components::DynamicConfigClient>()
+          .Append<components::DynamicConfigClientUpdater>();
   return utils::DaemonMain(argc, argv, component_list);
 }

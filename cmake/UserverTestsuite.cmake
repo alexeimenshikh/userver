@@ -1,90 +1,181 @@
+include_guard()
+
 include(CTest)
 include(FindPython)
 
 option(USERVER_FEATURE_TESTSUITE "Enable functional tests via testsuite" ON)
-if (USERVER_FEATURE_TESTSUITE) 
-  # find package python3-dev required by virtualenv
-  execute_process(
-    COMMAND bash "-c" "command -v python3-config"
-    OUTPUT_VARIABLE PYTHONCONFIG_FOUND
-  )
-  if (NOT PYTHONCONFIG_FOUND)
-    message(FATAL_ERROR "Python dev is not found")
+
+if(USERVER_FEATURE_TESTSUITE)
+  get_property(userver_python_dev_checked
+      GLOBAL PROPERTY userver_python_dev_checked)
+  if(NOT userver_python_dev_checked)
+    # find package python3-dev required by virtualenv
+    execute_process(
+        COMMAND bash "-c" "command -v python3-config"
+        OUTPUT_VARIABLE PYTHONCONFIG_FOUND
+    )
+    if(NOT PYTHONCONFIG_FOUND)
+      message(FATAL_ERROR "Python dev is not found")
+    endif()
+    set_property(GLOBAL PROPERTY userver_python_dev_checked "TRUE")
   endif()
 endif()
 
 get_filename_component(
-  USERVER_TESTSUITE_DIR ${CMAKE_CURRENT_LIST_DIR}/../testsuite ABSOLUTE)
+    USERVER_TESTSUITE_DIR "${CMAKE_CURRENT_LIST_DIR}/../testsuite" ABSOLUTE)
 
 function(userver_venv_setup)
-  set(options)
+  set(options UNIQUE)
   set(oneValueArgs NAME PYTHON_OUTPUT_VAR)
   set(multiValueArgs REQUIREMENTS VIRTUALENV_ARGS PIP_ARGS)
 
   cmake_parse_arguments(
-    ARG "${options}" "${oneValueArgs}" "${multiValueArgs}"  ${ARGN})
+      ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" "${ARGN}")
 
-  if (NOT ARG_REQUIREMENTS)
+  if(NOT ARG_REQUIREMENTS)
     message(FATAL_ERROR "No REQUIREMENTS given for venv")
     return()
   endif()
 
-  if (NOT ARG_NAME)
-    set(VENV_NAME "venv")
-    set(PYTHON_OUTPUT_VAR "TESTSUITE_VENV_PYTHON")
+  if(NOT ARG_NAME)
+    set(venv_name "venv")
+    set(python_output_var "TESTSUITE_VENV_PYTHON")
   else()
-    set(VENV_NAME "venv-${ARG_NAME}")
-    string(TOUPPER "TESTSUITE_VENV_${ARG_NAME}_PYTHON" PYTHON_OUTPUT_VAR)
+    set(venv_name "venv-${ARG_NAME}")
+    string(TOUPPER "TESTSUITE_VENV_${ARG_NAME}_PYTHON" python_output_var)
   endif()
 
-  if (ARG_PYTHON_OUTPUT_VAR)
-    set(PYTHON_OUTPUT_VAR ${ARG_PYTHON_OUTPUT_VAR})
+  if(ARG_PYTHON_OUTPUT_VAR)
+    set(python_output_var "${ARG_PYTHON_OUTPUT_VAR}")
+  endif()
+
+  if(ARG_UNIQUE)
+    set(parent_directory "${CMAKE_BINARY_DIR}")
+  else()
+    set(parent_directory "${CMAKE_CURRENT_BINARY_DIR}")
+  endif()
+
+  set(venv_dir "${parent_directory}/${venv_name}")
+  set(venv_bin_dir "${venv_dir}/bin")
+  set("${python_output_var}" "${venv_bin_dir}/python" PARENT_SCOPE)
+
+  # A unique venv is set up once for the whole build.
+  # For example, a userver gRPC cmake script may be included multiple times
+  # during the Configure, but only 1 venv should be created.
+  # Global properties are used to check that all userver_venv_setup
+  # for a given venv are invoked with the same params.
+  if(ARG_UNIQUE)
+    set(venv_unique_params
+        venv ${ARG_REQUIREMENTS} ${ARG_VIRTUALENV_ARGS} ${ARG_PIP_ARGS})
+    get_property(cached_venv_unique_params
+        GLOBAL PROPERTY "userver-venv-${ARG_NAME}-params")
+    if(cached_venv_unique_params)
+      if(NOT cached_venv_unique_params STREQUAL venv_unique_params)
+        message(FATAL_ERROR
+            "Unique venv '${ARG_NAME}' is created multiple times with "
+            "different params, "
+            "before='${cached_venv_unique_params}' "
+            "after='${venv_unique_params}'")
+      endif()
+      return()
+    endif()
   endif()
 
   find_program(TESTSUITE_VIRTUALENV virtualenv)
-  if (${TESTSUITE_VIRTUALENV} STREQUAL "TESTSUITE_VIRTUALENV-NOTFOUND")
+  if(NOT TESTSUITE_VIRTUALENV)
     message(FATAL_ERROR
-      "No virtualenv binary found, try to install:\n"
-      "Debian: sudo apt install virtualenv\n"
-      "MacOS: brew install virtualenv\n"
-      "ArchLinux: sudo pacman -S python-virtualenv")
+        "No virtualenv binary found, try to install:\n"
+        "Debian: sudo apt install virtualenv\n"
+        "MacOS: brew install virtualenv\n"
+        "ArchLinux: sudo pacman -S python-virtualenv")
   endif()
 
-  set(VENV_DIR ${CMAKE_CURRENT_BINARY_DIR}/${VENV_NAME})
-  set(VENV_BIN_DIR ${VENV_DIR}/bin)
-  set(${PYTHON_OUTPUT_VAR} ${VENV_BIN_DIR}/python PARENT_SCOPE)
+  message(STATUS "Setting up the virtualenv at ${venv_dir}")
 
-  message(STATUS "Setting up the virtualenv with requirements:")
-  foreach(req ${ARG_REQUIREMENTS})
-    message(STATUS "  ${req}")
-  endforeach()
-
-  if (NOT EXISTS ${VENV_DIR})
+  if(NOT EXISTS "${venv_dir}")
     execute_process(
-      COMMAND ${TESTSUITE_VIRTUALENV} --system-site-packages --python=${PYTHON} ${VENV_DIR} ${ARG_VIRTUALENV_ARGS}
-      RESULT_VARIABLE STATUS
+        COMMAND
+        "${TESTSUITE_VIRTUALENV}"
+        --system-site-packages
+        "--python=${PYTHON}"
+        "${venv_dir}"
+        ${ARG_VIRTUALENV_ARGS}
+        RESULT_VARIABLE status
     )
-    if (STATUS)
-      file(REMOVE_RECURSE ${VENV_DIR})
+    if(status)
+      file(REMOVE_RECURSE "${venv_dir}")
       message(FATAL_ERROR "Failed to create Python virtual environment")
     endif()
   endif()
-  list(TRANSFORM ARG_REQUIREMENTS PREPEND "--requirement="
-    OUTPUT_VARIABLE PIP_REQUIREMENTS)
-  execute_process(
-    COMMAND ${VENV_BIN_DIR}/pip install --disable-pip-version-check
-      -U ${PIP_REQUIREMENTS} ${ARG_PIP_ARGS}
-    RESULT_VARIABLE STATUS
-  )
-  if (STATUS)
-    message(FATAL_ERROR "Failed to install testsuite dependencies")
+
+  # If pip has already installed packages using the same requirements,
+  # then don't run it again. This optimization dramatically reduces
+  # re-Configure times.
+  set(venv_params "")
+  set(format_version 1)
+  string(APPEND venv_params "format-version=${format_version}\n")
+  string(APPEND venv_params "pip-args=${ARG_PIP_ARGS}\n")
+  foreach(requirement IN LISTS ARG_REQUIREMENTS)
+    file(READ "${requirement}" requirement_contents)
+    if(NOT requirement_contents MATCHES "\n$")
+      message(FATAL_ERROR "venv requirements file must end with a newline")
+    endif()
+    string(APPEND venv_params "${requirement_contents}")
+  endforeach()
+
+  set(should_run_pip TRUE)
+  set(venv_params_file "${venv_dir}/venv-params.txt")
+  if(EXISTS "${venv_params_file}")
+    file(READ "${venv_params_file}" venv_params_old)
+    if(venv_params_old STREQUAL venv_params)
+      set(should_run_pip FALSE)
+    endif()
+  endif()
+
+  if(should_run_pip)
+    message(STATUS "Installing requirements:")
+    foreach(requirement IN LISTS ARG_REQUIREMENTS)
+      message(STATUS "  ${requirement}")
+    endforeach()
+    list(
+        TRANSFORM ARG_REQUIREMENTS
+        PREPEND "--requirement="
+        OUTPUT_VARIABLE pip_requirements
+    )
+    execute_process(
+        COMMAND
+        "${venv_bin_dir}/pip" install
+        --disable-pip-version-check
+        -U ${pip_requirements}
+        ${ARG_PIP_ARGS}
+        RESULT_VARIABLE status
+    )
+    if(status)
+      message(FATAL_ERROR "Failed to install venv requirements")
+    endif()
+    file(WRITE "${venv_params_file}" "${venv_params}")
+  endif()
+
+  if(ARG_UNIQUE)
+    set_property(GLOBAL PROPERTY "userver-venv-${ARG_NAME}-params"
+        ${venv_unique_params})
   endif()
 endfunction()
 
 function(userver_testsuite_add)
   set(options)
-  set(oneValueArgs SERVICE_TARGET WORKING_DIRECTORY PYTHON_BINARY PRETTY_LOGS)
-  set(multiValueArgs PYTEST_ARGS REQUIREMENTS PYTHONPATH VIRTUALENV_ARGS)
+  set(oneValueArgs
+      SERVICE_TARGET
+      WORKING_DIRECTORY
+      PYTHON_BINARY
+      PRETTY_LOGS
+  )
+  set(multiValueArgs
+      PYTEST_ARGS
+      REQUIREMENTS
+      PYTHONPATH
+      VIRTUALENV_ARGS
+  )
   cmake_parse_arguments(
     ARG "${options}" "${oneValueArgs}" "${multiValueArgs}"  ${ARGN})
 
@@ -159,4 +250,186 @@ function(userver_testsuite_add)
     COMMAND ${TESTSUITE_RUNNER} --service-runner-mode ${PRETTY_LOGS_MODE} -vvs ${ARG_WORKING_DIRECTORY}
     DEPENDS ${TESTSUITE_RUNNER} ${ARG_SERVICE_TARGET}
   )
+endfunction()
+
+# Tries to search service files in some standard places.
+# Should be invoked from the service's CMakeLists.txt
+# Supports the following file structure (and a few others):
+# - configs/config.yaml
+# - configs/config_vars.[testsuite|tests].yaml [optional]
+# - configs/dynamic_config_fallback.json
+# - configs/[secdist|secure_data].json [optional]
+# - [testsuite|tests]/conftest.py
+function(userver_testsuite_add_simple)
+  set(options)
+  set(oneValueArgs
+      SERVICE_TARGET
+      WORKING_DIRECTORY
+      PYTHON_BINARY
+      PRETTY_LOGS
+      CONFIG_PATH
+      CONFIG_VARS_PATH
+      DYNAMIC_CONFIG_FALLBACK_PATH
+      SECDIST_PATH
+      TEST_ENV
+  )
+  set(multiValueArgs
+      PYTEST_ARGS
+      REQUIREMENTS
+      PYTHONPATH
+      VIRTUALENV_ARGS
+  )
+  cmake_parse_arguments(
+      ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  set(pytest_additional_args)
+
+  if(ARG_WORKING_DIRECTORY)
+    if(IS_ABSOLUTE "${ARG_WORKING_DIRECTORY}")
+      file(RELATIVE_PATH tests_relative_path
+          "${CMAKE_CURRENT_SOURCE_DIR}" "${ARG_WORKING_DIRECTORY}")
+    else()
+      set(tests_relative_path "${ARG_WORKING_DIRECTORY}")
+      get_filename_component(ARG_WORKING_DIRECTORY "${ARG_WORKING_DIRECTORY}"
+          REALPATH BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+  else()
+    foreach(probable_tests_path IN ITEMS
+        "testsuite"
+        "tests"
+        "."
+    )
+      if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${probable_tests_path}/conftest.py")
+        set(ARG_WORKING_DIRECTORY
+            "${CMAKE_CURRENT_SOURCE_DIR}/${probable_tests_path}")
+        set(tests_relative_path "${probable_tests_path}")
+        break()
+      endif()
+    endforeach()
+  endif()
+
+  if(NOT ARG_SERVICE_TARGET)
+    if(tests_relative_path STREQUAL "." OR tests_relative_path STREQUAL "tests")
+      set(ARG_SERVICE_TARGET "${PROJECT_NAME}")
+    else()
+      set(ARG_SERVICE_TARGET "${PROJECT_NAME}-${tests_relative_path}")
+    endif()
+  endif()
+
+  if(ARG_CONFIG_PATH)
+    get_filename_component(config_path "${ARG_CONFIG_PATH}"
+        REALPATH BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  else()
+    foreach(probable_config_path IN ITEMS
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/static_config.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/config.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/static_config.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/config.yaml"
+    )
+      if(EXISTS "${probable_config_path}")
+        set(config_path "${probable_config_path}")
+        break()
+      endif()
+    endforeach()
+
+    if(NOT config_path)
+      message(FATAL_ERROR
+          "Failed to find service static config for testsuite. "
+          "Please pass it to ${CMAKE_CURRENT_FUNCTION} as CONFIG_PATH arg.")
+    endif()
+  endif()
+
+  if(ARG_CONFIG_VARS_PATH)
+    get_filename_component(config_vars_path "${ARG_CONFIG_VARS_PATH}"
+        REALPATH BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  else()
+    foreach(probable_config_vars_path IN ITEMS
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/config_vars.testsuite.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/config_vars.testing.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/config_vars.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/config_vars.testsuite.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/config_vars.testing.yaml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/config_vars.yaml"
+    )
+      if(EXISTS "${probable_config_vars_path}")
+        set(config_vars_path "${probable_config_vars_path}")
+        break()
+      endif()
+    endforeach()
+  endif()
+  if(config_vars_path)
+    list(APPEND pytest_additional_args
+        "--service-config-vars=${config_vars_path}")
+  endif()
+
+  if(ARG_DYNAMIC_CONFIG_FALLBACK_PATH)
+    get_filename_component(dynamic_config_fallback_path
+        "${ARG_DYNAMIC_CONFIG_FALLBACK_PATH}"
+        REALPATH BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  else()
+    foreach(probable_dynamic_config_fallback_path IN ITEMS
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/dynamic_config_fallback.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/dynamic_config_fallback.json"
+    )
+      if(EXISTS "${probable_dynamic_config_fallback_path}")
+        set(dynamic_config_fallback_path
+            "${probable_dynamic_config_fallback_path}")
+        break()
+      endif()
+    endforeach()
+  endif()
+  if(NOT dynamic_config_fallback_path)
+    message(FATAL_ERROR
+        "Failed to find dynamic_config_fallback.json for testsuite. "
+        "Please pass it to ${CMAKE_CURRENT_FUNCTION} "
+        "as DYNAMIC_CONFIG_FALLBACK_PATH arg.")
+  endif()
+
+  if(ARG_SECDIST_PATH)
+    get_filename_component(secdist_path "${ARG_CONFIG_VARS_PATH}"
+        REALPATH BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+  else()
+    foreach(probable_secdist_path IN ITEMS
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/secdist.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/configs/secure_data.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/secdist.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/secure_data.json"
+    )
+      if(EXISTS "${probable_secdist_path}")
+        set(secdist_path "${probable_secdist_path}")
+        break()
+      endif()
+    endforeach()
+  endif()
+  if(secdist_path)
+    list(APPEND pytest_additional_args
+        "--service-secdist=${secdist_path}")
+  endif()
+
+  if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/proto")
+    list(APPEND ARG_PYTHONPATH "${CMAKE_CURRENT_BINARY_DIR}/proto")
+  endif()
+
+  userver_testsuite_add(
+      SERVICE_TARGET "${ARG_SERVICE_TARGET}"
+      WORKING_DIRECTORY "${ARG_WORKING_DIRECTORY}"
+      PYTHON_BINARY "${ARG_PYTHON_BINARY}"
+      PRETTY_LOGS "${ARG_PRETTY_LOGS}"
+      PYTEST_ARGS
+      "--service-config=${config_path}"
+      "--service-source-dir=${CMAKE_CURRENT_SOURCE_DIR}"
+      "--service-binary=${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}"
+      "--config-fallback=${dynamic_config_fallback_path}"
+      ${pytest_additional_args}
+      ${ARG_PYTEST_ARGS}
+      REQUIREMENTS ${ARG_REQUIREMENTS}
+      PYTHONPATH ${ARG_PYTHONPATH}
+      VIRTUALENV_ARGS ${ARG_VIRTUALENV_ARGS}
+  )
+
+  if(ARG_TEST_ENV)
+    set_tests_properties("testsuite-${ARG_SERVICE_TARGET}"
+        PROPERTIES ENVIRONMENT ${ARG_TEST_ENV}
+    )
+  endif()
 endfunction()

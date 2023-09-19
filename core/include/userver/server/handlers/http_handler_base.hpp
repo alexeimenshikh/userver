@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <userver/dynamic_config/source.hpp>
@@ -50,6 +51,7 @@ class HttpHandlerStatisticsScope;
 /// Name | Description | Default value
 /// ---- | ----------- | -------------
 /// log-level | overrides log level for this handle | <no override>
+/// status-codes-log-level | map of "status": log_level items to override span log level for specific status codes | {}
 ///
 /// ## Example usage:
 ///
@@ -190,6 +192,7 @@ class HttpHandlerBase : public HandlerBase {
   const std::string handler_name_;
   utils::statistics::Entry statistics_holder_;
   const tracing::TracingManagerBase& tracing_manager_;
+  std::unordered_map<int, logging::Level> log_level_for_status_codes_;
 
   std::unique_ptr<HttpHandlerStatistics> handler_statistics_;
   std::unique_ptr<HttpRequestStatistics> request_statistics_;

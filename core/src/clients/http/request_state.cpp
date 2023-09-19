@@ -64,7 +64,7 @@ std::error_code TestsuiteResponseHook(Status status_code,
 
     if (headers.end() != it) {
       LOG_INFO() << "Mockserver faked error of type " << it->second
-                 << tracing::impl::LogSpanAsLast{span};
+                 << tracing::impl::LogSpanAsLastNonCoro{span};
 
       const auto error_it = kTestsuiteActions.find(it->second);
       if (error_it != kTestsuiteActions.end()) {
@@ -167,7 +167,7 @@ RequestState::RequestState(
       stats_(std::move(req_stats)),
       dest_stats_(dest_stats),
       original_timeout_(kDefaultTimeout),
-      effective_timeout_(original_timeout_),
+      remote_timeout_(original_timeout_),
       tracing_manager_{&tracing::kDefaultTracingManager},
       is_cancelled_(false),
       errorbuffer_(),
@@ -263,7 +263,7 @@ void RequestState::http_version(curl::easy::http_version_t version) {
 
 void RequestState::set_timeout(long timeout_ms) {
   original_timeout_ = std::chrono::milliseconds{timeout_ms};
-  effective_timeout_ = original_timeout_;
+  remote_timeout_ = original_timeout_;
 }
 
 void RequestState::retry(short retries, bool on_fails) {
@@ -406,8 +406,8 @@ void RequestState::on_completed(std::shared_ptr<RequestState> holder,
       [sockets](RequestStats& stats) { stats.AccountOpenSockets(sockets); });
 
   span.AddTag(tracing::kAttempts, holder->retry_.current);
-  if (holder->effective_timeout_ != holder->original_timeout_) {
-    span.AddTag("propagated_timeout_ms", holder->effective_timeout_.count());
+  if (holder->deadline_propagation_config_.update_header) {
+    span.AddTag("propagated_timeout_ms", holder->remote_timeout_.count());
   }
 
   if (err) {
@@ -471,7 +471,8 @@ void RequestState::on_retry(std::shared_ptr<RequestState> holder,
   UASSERT(holder);
   UASSERT(holder->span_storage_);
   LOG_TRACE() << "RequestImpl::on_retry"
-              << tracing::impl::LogSpanAsLast{holder->span_storage_->Get()};
+              << tracing::impl::LogSpanAsLastNonCoro{
+                     holder->span_storage_->Get()};
 
   // We do not need to retry:
   // - if we got result and HTTP code is good
@@ -492,7 +493,10 @@ void RequestState::on_retry(std::shared_ptr<RequestState> holder,
         std::clamp(holder->retry_.current - 1, 0, kEBMaxPower);
     const auto backoff = kEBBaseTime * (utils::RandRange(1 << eb_power) + 1);
 
-    if (!holder->UpdateTimeoutFromDeadlineAndCheck(backoff)) {
+    holder->UpdateTimeoutFromDeadline(backoff);
+    if (holder->remote_timeout_ <= std::chrono::milliseconds::zero()) {
+      holder->deadline_expired_ = true;
+      RequestState::on_completed(std::move(holder), err);
       return;
     }
 
@@ -685,18 +689,22 @@ engine::Deadline RequestState::GetDeadline() const noexcept {
   return deadline_;
 }
 
+bool RequestState::IsDeadlineExpired() const noexcept {
+  return deadline_expired_;
+}
+
 void RequestState::UpdateTimeoutFromDeadline(
-    std::chrono::milliseconds rtt_estimate) {
-  UASSERT(effective_timeout_ >= std::chrono::milliseconds::zero());
+    std::chrono::milliseconds backoff) {
+  UASSERT(remote_timeout_ >= std::chrono::milliseconds::zero());
   if (!deadline_.IsReachable()) return;
 
   const auto timeout_from_deadline =
       std::clamp(std::chrono::duration_cast<std::chrono::milliseconds>(
-                     deadline_.TimeLeft() - rtt_estimate),
+                     deadline_.TimeLeft() - backoff),
                  std::chrono::milliseconds{0}, original_timeout_);
 
   if (timeout_from_deadline != original_timeout_) {
-    effective_timeout_ = timeout_from_deadline;
+    remote_timeout_ = timeout_from_deadline;
     timeout_updated_by_deadline_ = true;
     WithRequestStats(
         [](RequestStats& stats) { stats.AccountTimeoutUpdatedByDeadline(); });
@@ -704,9 +712,9 @@ void RequestState::UpdateTimeoutFromDeadline(
 }
 
 bool RequestState::UpdateTimeoutFromDeadlineAndCheck(
-    std::chrono::milliseconds rtt_estimate) {
-  UpdateTimeoutFromDeadline(rtt_estimate);
-  if (effective_timeout_ <= std::chrono::milliseconds::zero()) {
+    std::chrono::milliseconds backoff) {
+  UpdateTimeoutFromDeadline(backoff);
+  if (remote_timeout_ <= std::chrono::milliseconds::zero()) {
     deadline_expired_ = true;
     HandleDeadlineAlreadyPassed();
     return false;
@@ -715,10 +723,10 @@ bool RequestState::UpdateTimeoutFromDeadlineAndCheck(
 }
 
 void RequestState::UpdateTimeoutHeader() {
-  if (deadline_propagation_config_.update_header) return;
+  if (!deadline_propagation_config_.update_header) return;
 
   easy().add_header(USERVER_NAMESPACE::http::headers::kXYaTaxiClientTimeoutMs,
-                    fmt::to_string(effective_timeout_.count()),
+                    fmt::to_string(remote_timeout_.count()),
                     curl::easy::DuplicateHeaderAction::kReplace);
 }
 
@@ -727,6 +735,7 @@ void RequestState::HandleDeadlineAlreadyPassed() {
   span.AddTag(tracing::kAttempts, retry_.current - 1);
   span.AddTag(tracing::kErrorFlag, true);
   span.AddTag("propagated_timeout_ms", 0);
+  span.AddTag("cancelled_by_deadline", 1);
 
   WithRequestStats(
       [](RequestStats& stats) { stats.AccountCancelledByDeadline(); });
@@ -754,14 +763,18 @@ void RequestState::CheckResponseDeadline(std::error_code& err,
                                          Status status_code) {
   const std::chrono::microseconds attempt_time{easy().get_total_time_usec()};
 
-  if (deadline_expired_ ||
-      (deadline_propagation_config_.update_header &&
-       timeout_updated_by_deadline_ && attempt_time >= effective_timeout_)) {
+  if (!deadline_expired_ && timeout_updated_by_deadline_ &&
+      (attempt_time >= remote_timeout_ ||
+       (!err && IsDeadlineExpiredResponse(status_code)))) {
     // The most probable cause is IsDeadlineExpiredResponse, case (1).
     // Even if not, the ResponseFuture already has thrown or is preparing
     // to throw a CancelledException, so reflect it here for consistency.
     deadline_expired_ = true;
+  }
+
+  if (deadline_expired_) {
     err = std::error_code{curl::errc::EasyErrorCode::kOperationTimedout};
+    span_storage_->Get().AddTag("cancelled_by_deadline", 1);
     WithRequestStats(
         [](RequestStats& stats) { stats.AccountCancelledByDeadline(); });
   } else if (!err && IsDeadlineExpiredResponse(status_code)) {
@@ -790,12 +803,12 @@ bool RequestState::IsDeadlineExpiredResponse(Status status_code) {
 bool RequestState::ShouldRetryResponse() {
   const auto status_code = static_cast<Status>(easy().get_response_code());
 
-  if (status_code >= kLeastBadHttpCodeForEB) return true;
+  if (IsDeadlineExpiredResponse(status_code)) {
+    // See IsDeadlineExpiredResponse, case (2).
+    return !timeout_updated_by_deadline_ && retry_.on_fails;
+  }
 
-  return status_code >= kLeastBadHttpCodeForEB ||
-         // See IsDeadlineExpiredResponse. We return 'true' for both cases here
-         // and check case (1) separately in on_retry.
-         IsDeadlineExpiredResponse(status_code);
+  return status_code >= kLeastBadHttpCodeForEB;
 }
 
 void RequestState::AccountResponse(std::error_code err) {
@@ -839,12 +852,17 @@ void RequestState::ResetDataForNewRequest() {
 
   is_cancelled_ = false;
   retry_.current = 1;
-  effective_timeout_ = original_timeout_;
+  remote_timeout_ = original_timeout_;
   deadline_ = server::request::GetTaskInheritedDeadline();
   deadline_expired_ = false;
   timeout_updated_by_deadline_ = false;
 
   ApplyTestsuiteConfig();
+
+  // Testsuite config might have changed the timeout, so add the tag here.
+  // Note: HookPerformRequest can potentially change timeout manually
+  // per-attempt. These changes are currently ignored.
+  span_storage_->Get().AddTag(tracing::kTimeoutMs, original_timeout_.count());
 
   // Ignore deadline propagation when setting cURL timeout to avoid closing
   // connections on deadline expiration. The connection will still be closed if
@@ -864,7 +882,7 @@ size_t RequestState::StreamWriteFunction(char* ptr, size_t size, size_t nmemb,
   LOG_DEBUG() << fmt::format(
                      "Got bytes in stream API chunk, chunk of ({} bytes)",
                      actual_size)
-              << tracing::impl::LogSpanAsLast{rs.span_storage_->Get()};
+              << tracing::impl::LogSpanAsLastNonCoro{rs.span_storage_->Get()};
 
   std::string buffer(ptr, actual_size);
   auto& queue_producer = stream_data->queue_producer;
@@ -933,7 +951,6 @@ void RequestState::StartNewSpan(utils::impl::SourceLocation location) {
   plugin_pipeline_.HookCreateSpan(*this);
   span.AddTag(tracing::kHttpUrl, GetLoggedOriginalUrl());
   span.AddTag(tracing::kMaxAttempts, retry_.retries);
-  span.AddTag(tracing::kTimeoutMs, original_timeout_.count());
 
   // Span is local to a Request, it is not related to current coroutine
   span.DetachFromCoroStack();
@@ -956,7 +973,7 @@ void RequestState::WithRequestStats(const Func& func) {
 }
 
 void RequestState::ResolveTargetAddress(clients::dns::Resolver& resolver) {
-  const auto deadline = engine::Deadline::FromDuration(effective_timeout_);
+  const auto deadline = engine::Deadline::FromDuration(remote_timeout_);
 
   const MaybeOwnedUrl target{proxy_url_, easy()};
   const std::string hostname = target.Get().GetHostPtr().get();

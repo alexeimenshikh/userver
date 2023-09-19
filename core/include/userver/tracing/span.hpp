@@ -22,7 +22,8 @@ class SpanBuilder;
 /// @brief Measures the execution time of the current code block, links it with
 /// the parent tracing::Spans and stores that info in the log.
 ///
-/// See @ref md_en_userver_logging for usage examples and more descriptions.
+/// See @ref scripts/docs/en/userver/logging.md for usage examples and more
+/// descriptions.
 ///
 /// @warning Shall be created only as a local variable. Do not use it as a
 /// class member!
@@ -163,6 +164,8 @@ class Span final {
   /// @cond
   void AddTags(const logging::LogExtra&, utils::InternalTag);
 
+  void AddNonInheritableTags(const logging::LogExtra&, utils::InternalTag);
+
   impl::TimeStorage& GetTimeStorage();
 
   // For internal use only.
@@ -194,12 +197,12 @@ class Span final {
 
 namespace impl {
 
-// Must be logged as the last item, after the rest of text.
-struct LogSpanAsLast final {
+struct LogSpanAsLastNonCoro final {
   const Span& span;
 };
 
-logging::LogHelper& operator<<(logging::LogHelper& lh, LogSpanAsLast span);
+logging::LogHelper& operator<<(logging::LogHelper& lh,
+                               LogSpanAsLastNonCoro span);
 
 }  // namespace impl
 

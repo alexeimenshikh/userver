@@ -40,7 +40,6 @@
 #include <userver/utils/fast_scope_guard.hpp>
 #include <userver/utils/from_string.hpp>
 #include <userver/utils/graphite.hpp>
-#include <userver/utils/impl/userver_experiments.hpp>
 #include <userver/utils/log.hpp>
 #include <userver/utils/overloaded.hpp>
 #include <userver/utils/scope_guard.hpp>
@@ -331,15 +330,6 @@ struct DeadlinePropagationContext final {
   bool is_cancelled_by_deadline{false};
 };
 
-constexpr std::string_view kDeadlinePropagationStep =
-    "check_deadline_propagation";
-
-utils::impl::UserverExperiment handler_cancel_on_immediate_deadline_expiration{
-    "handler-cancel-on-immediate-deadline-expiration", true};
-
-utils::impl::UserverExperiment handler_override_response_on_deadline{
-    "handler-override-response-on-deadline", true};
-
 void HandleDeadlineExpired(RequestProcessor& processor,
                            DeadlinePropagationContext& dp_context,
                            std::string internal_message) {
@@ -387,8 +377,7 @@ void SetUpInheritedDeadline(RequestProcessor& processor,
       processor.GetRequest().GetStartTime() + *timeout);
   inherited_data.deadline = deadline;
 
-  if (handler_cancel_on_immediate_deadline_expiration.IsEnabled() &&
-      deadline.IsSurelyReachedApprox()) {
+  if (deadline.IsSurelyReachedApprox()) {
     HandleDeadlineExpired(processor, dp_context,
                           "Immediate timeout (deadline propagation)");
     return;
@@ -426,19 +415,24 @@ void CompleteDeadlinePropagation(RequestProcessor& processor,
   const auto& request = processor.GetRequest();
   auto& response = request.GetHttpResponse();
 
-  const auto& inherited_data = request::kTaskInheritedData.Get();
-  if (!inherited_data.deadline.IsReachable()) return;
+  const auto* const inherited_data = request::kTaskInheritedData.GetOptional();
+  if (!inherited_data) {
+    // Handling was interrupted before it got to SetUpInheritedData.
+    return;
+  }
+
+  if (!inherited_data->deadline.IsReachable()) return;
 
   const bool cancelled_by_deadline =
       engine::current_task::CancellationReason() ==
           engine::TaskCancellationReason::kDeadline ||
-      inherited_data.deadline.IsReached();
+      inherited_data->deadline_signal.IsExpired() ||
+      inherited_data->deadline.IsReached();
 
   auto& span = tracing::Span::CurrentSpan();
   span.AddNonInheritableTag("cancelled_by_deadline", cancelled_by_deadline);
 
-  if (handler_override_response_on_deadline.IsEnabled() &&
-      cancelled_by_deadline && !dp_context.is_cancelled_by_deadline) {
+  if (cancelled_by_deadline && !dp_context.is_cancelled_by_deadline) {
     const auto& original_body = response.GetData();
     if (!original_body.empty() && span.ShouldLogDefault()) {
       span.AddNonInheritableTag("dp_original_body_size", original_body.size());
@@ -504,6 +498,15 @@ logging::LogExtra LogRequestExtra(bool need_log_request_headers,
   return log_extra;
 }
 
+std::unordered_map<int, logging::Level> ParseStatusCodesLogLevel(
+    const std::unordered_map<std::string, std::string>& codes) {
+  std::unordered_map<int, logging::Level> result;
+  for (const auto& [key, value] : codes) {
+    result[utils::FromString<int>(key)] = logging::LevelFromString(value);
+  }
+  return result;
+}
+
 }  // namespace
 
 HttpHandlerBase::HttpHandlerBase(const components::ComponentConfig& config,
@@ -517,6 +520,9 @@ HttpHandlerBase::HttpHandlerBase(const components::ComponentConfig& config,
       tracing_manager_(
           context.FindComponent<tracing::DefaultTracingManagerLocator>()
               .GetTracingManager()),
+      log_level_for_status_codes_(ParseStatusCodesLogLevel(
+          config["status-codes-log-level"]
+              .As<std::unordered_map<std::string, std::string>>({}))),
       handler_statistics_(std::make_unique<HttpHandlerStatistics>()),
       request_statistics_(std::make_unique<HttpRequestStatistics>()),
       auth_checkers_(auth::CreateAuthCheckers(
@@ -666,7 +672,7 @@ void HttpHandlerBase::HandleRequest(request::RequestBase& request,
         [this, &http_request] { CheckRatelimit(http_request); });
 
     request_processor.ProcessRequestStepNoScopeTime(
-        kDeadlinePropagationStep, [&request_processor, &dp_context] {
+        "check_deadline_propagation", [&request_processor, &dp_context] {
           SetUpInheritedData(request_processor, dp_context);
         });
 
@@ -789,7 +795,11 @@ HttpRequestStatistics& HttpHandlerBase::GetRequestStatistics() const {
 
 logging::Level HttpHandlerBase::GetLogLevelForResponseStatus(
     http::HttpStatus status) const {
-  auto status_code = static_cast<int>(status);
+  const auto status_code = static_cast<int>(status);
+  const auto* const level =
+      utils::FindOrNullptr(log_level_for_status_codes_, status_code);
+  if (level) return *level;
+
   if (status_code >= 400 && status_code <= 499) return logging::Level::kWarning;
   if (status_code >= 500 && status_code <= 599) return logging::Level::kError;
   return logging::Level::kInfo;
@@ -833,8 +843,7 @@ void HttpHandlerBase::CheckAuth(
 
 void HttpHandlerBase::CheckRatelimit(
     const http::HttpRequest& http_request) const {
-  auto& statistics = handler_statistics_->GetByMethod(http_request.GetMethod());
-  auto& total_statistics = handler_statistics_->GetTotal();
+  auto& statistics = handler_statistics_->ForMethod(http_request.GetMethod());
 
   const bool success = rate_limit_.Obtain();
   if (!success) {
@@ -849,7 +858,6 @@ void HttpHandlerBase::CheckRatelimit(
         std::string{
             USERVER_NAMESPACE::http::headers::ratelimit_reason::kGlobal});
     statistics.IncrementRateLimitReached();
-    total_statistics.IncrementRateLimitReached();
 
     throw ExceptionWithCode<HandlerErrorCode::kTooManyRequests>();
   }
@@ -867,7 +875,6 @@ void HttpHandlerBase::CheckRatelimit(
             USERVER_NAMESPACE::http::headers::ratelimit_reason::kInFlight});
 
     statistics.IncrementTooManyRequestsInFlight();
-    total_statistics.IncrementTooManyRequestsInFlight();
 
     throw ExceptionWithCode<HandlerErrorCode::kTooManyRequests>();
   }
@@ -952,14 +959,18 @@ std::string HttpHandlerBase::GetResponseDataForLoggingChecked(
 template <typename HttpStatistics>
 void HttpHandlerBase::FormatStatistics(utils::statistics::Writer result,
                                        const HttpStatistics& stats) {
-  result = stats.GetTotal();
+  using Snapshot = typename HttpStatistics::Snapshot;
+  Snapshot total;
 
-  if (IsMethodStatisticIncluded()) {
-    for (auto method : GetAllowedMethods()) {
-      result.ValueWithLabels(stats.GetByMethod(method),
-                             {"http_method", ToString(method)});
+  for (const auto method : GetAllowedMethods()) {
+    const Snapshot by_method{stats.GetByMethod(method)};
+    if (IsMethodStatisticIncluded()) {
+      result.ValueWithLabels(by_method, {"http_method", ToString(method)});
     }
+    total.Add(by_method);
   }
+
+  result = total;
 }
 
 void HttpHandlerBase::SetResponseAcceptEncoding(
@@ -1001,6 +1012,13 @@ properties:
         type: string
         description: overrides log level for this handle
         defaultDescription: <no override>
+    status-codes-log-level:
+        type: object
+        properties: {}
+        additionalProperties:
+            type: string
+            description: log level
+        description: HTTP status code -> log level map
 )");
 }
 

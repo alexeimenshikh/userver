@@ -2,10 +2,12 @@
 
 /// @file userver/utils/from_string.hpp
 /// @brief @copybrief utils::FromString
+/// @ingroup userver_universal
 
 #include <cctype>
 #include <cerrno>
 #include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <string>
@@ -171,6 +173,8 @@ template <typename T, typename StringType,
 T FromString(const StringType& str) {
   return impl::FromString<T>(str);
 }
+
+std::int64_t FromHexString(const std::string& str);
 
 }  // namespace utils
 

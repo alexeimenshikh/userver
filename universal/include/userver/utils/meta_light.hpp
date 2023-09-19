@@ -3,7 +3,9 @@
 /// @file userver/utils/meta_light.hpp
 /// @brief Lightweight concepts
 /// @see userver/utils/meta.hpp for more concepts
+/// @ingroup userver_universal
 
+// Don't add new includes here! Put concepts that require them in meta.hpp.
 #include <type_traits>
 
 #include <userver/utils/void_t.hpp>

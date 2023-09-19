@@ -31,6 +31,7 @@
 #include <userver/ugrpc/server/impl/async_service.hpp>
 #include <userver/ugrpc/server/impl/call_params.hpp>
 #include <userver/ugrpc/server/impl/call_traits.hpp>
+#include <userver/ugrpc/server/impl/error_code.hpp>
 #include <userver/ugrpc/server/impl/service_worker.hpp>
 #include <userver/ugrpc/server/middlewares/base.hpp>
 #include <userver/ugrpc/server/rpc.hpp>
@@ -46,6 +47,10 @@ void ReportHandlerError(const std::exception& ex, std::string_view call_name,
 void ReportNetworkError(const RpcInterruptedError& ex,
                         std::string_view call_name,
                         tracing::Span& span) noexcept;
+
+void ReportCustomError(
+    const USERVER_NAMESPACE::server::handlers::CustomHandlerException& ex,
+    CallAnyBase& call, tracing::Span& span);
 
 void SetupSpan(std::optional<tracing::InPlaceSpan>& span_holder,
                grpc::ServerContext& context, std::string_view call_name);
@@ -113,7 +118,11 @@ class CallData final {
         method_data_.method_id, context_, initial_request_, raw_responder_,
         queue, queue, prepare_.GetTag());
 
-    if (prepare_.Wait() != impl::AsyncMethodInvocation::WaitStatus::kOk) {
+    // Note: we ignore task cancellations here. Even if notify_when_done has
+    // already cancelled this RPC, we want to:
+    // 1. listen to further RPCs for the same method
+    // 2. handle this RPC correctly, including metrics, logs, etc.
+    if (Wait(prepare_) != impl::AsyncMethodInvocation::WaitStatus::kOk) {
       // the CompletionQueue is shutting down
 
       // Do not wait for notify_when_done. When queue is shutting down, it will
@@ -179,13 +188,15 @@ class CallData final {
         initial_request = &initial_request_;
       }
 
-      // TODO: pass responder as function_ref?
       auto& middlewares = method_data_.service_data.settings.middlewares;
       MiddlewareCallContext middleware_context(
           middlewares, responder, do_call, service_name, method_name,
           method_data_.service_data.settings.config_source.GetSnapshot(),
           initial_request);
       middleware_context.Next();
+    } catch (
+        const USERVER_NAMESPACE::server::handlers::CustomHandlerException& ex) {
+      ReportCustomError(ex, responder, span_->Get());
     } catch (const RpcInterruptedError& ex) {
       ReportNetworkError(ex, call_name, span_->Get());
       statistics_scope.OnNetworkError();

@@ -204,9 +204,9 @@ ConnectionPtr ConnectionPool::Acquire(engine::Deadline deadline) {
   auto config = GetConfigSource().GetSnapshot();
   CheckDeadlineIsExpired(config);
   ConnectionPtr connection{Pop(deadline), std::move(shared_this)};
+  ++stats_.connection.used;
   CheckDeadlineIsExpired(config);
 
-  ++stats_.connection.used;
   connection->UpdateDefaultCommandControl();
   return connection;
 }
@@ -450,13 +450,12 @@ void ConnectionPool::CheckMinPoolSizeUnderflow() {
 }
 
 void ConnectionPool::Push(Connection* connection) {
-  if (connection->IsInAbortedPipeline()) {
-    // TODO : this is us investigating issues with pipelining,
-    // remove in TAXICOMMON-6886
-    USERVER_NAMESPACE::utils::impl::AbortWithStacktrace(
-        "Connection returned into pool with PQ_PIPELINE_ABORTED "
-        "pipeline status, shouldn't happen. "
-        "Please collect the core dump and file an issue.");
+  // However unlikely, this could happen when we return connection after
+  // asynchronous cleanup routine.
+  // A good safety measure anyway.
+  if (connection->IsBroken() || connection->IsInAbortedPipeline()) {
+    DeleteBrokenConnection(connection);
+    return;
   }
 
   auto conn_settings = conn_settings_.Read();

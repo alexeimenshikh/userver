@@ -7,7 +7,6 @@ from conan.tools.cmake import cmake_layout
 from conan.tools.cmake import CMakeDeps
 from conan.tools.cmake import CMakeToolchain
 from conan.tools.files import copy
-from conan.tools.files import replace_in_file
 
 required_conan_version = '>=1.51.0, <2.0.0'  # pylint: disable=invalid-name
 
@@ -100,8 +99,6 @@ class UserverConan(ConanFile):
         self.requires('http_parser/2.9.4')
         self.requires('openssl/1.1.1s')
         self.requires('rapidjson/cci.20220822')
-        self.requires('spdlog/1.9.0')
-        self.options['spdlog'].header_only = True
         self.requires('yaml-cpp/0.7.0')
         self.requires('zlib/1.2.13')
 
@@ -190,6 +187,21 @@ class UserverConan(ConanFile):
             keep_path=True,
         )
 
+        copy(
+            self,
+            pattern='*',
+            dst=os.path.join(
+                self.package_folder, 'include', 'function_backports',
+            ),
+            src=os.path.join(
+                self.source_folder,
+                'third_party',
+                'function_backports',
+                'include',
+            ),
+            keep_path=True,
+        )
+
         def copy_component(component):
             copy(
                 self,
@@ -234,22 +246,15 @@ class UserverConan(ConanFile):
                 src=os.path.join(self.source_folder, 'cmake'),
                 keep_path=True,
             )
-            replace_in_file(
-                self,
-                os.path.join(
-                    self.package_folder, 'cmake', 'GrpcTargets.cmake',
-                ),
-                'userver-grpc',
-                'userver::grpc',
-            )
 
-            grpc_file = open(
-                os.path.join(self.package_folder, 'cmake', 'GrpcConan.cmake'),
-                'a+',
-            )
-            grpc_file.write('\nset(USERVER_CONAN TRUE)')
-            grpc_file.write('\nset(PYTHON "python3")')
-            grpc_file.close()
+            with open(
+                    os.path.join(
+                        self.package_folder, 'cmake', 'GrpcConan.cmake',
+                    ),
+                    'a+',
+            ) as grpc_file:
+                grpc_file.write('\nset(USERVER_CONAN TRUE)')
+                grpc_file.write('\nset(PYTHON "python3")')
         if self.options.with_utest:
             copy(
                 self,
@@ -269,14 +274,15 @@ class UserverConan(ConanFile):
             )
             copy(
                 self,
-                pattern='UserverTestsuite.cmake',
+                pattern='AddGoogleTests.cmake',
                 dst=os.path.join(self.package_folder, 'cmake'),
                 src=os.path.join(self.source_folder, 'cmake'),
                 keep_path=True,
             )
+        if self.options.with_grpc or self.options.with_utest:
             copy(
                 self,
-                pattern='AddGoogleTests.cmake',
+                pattern='UserverTestsuite.cmake',
                 dst=os.path.join(self.package_folder, 'cmake'),
                 src=os.path.join(self.source_folder, 'cmake'),
                 keep_path=True,
@@ -419,8 +425,8 @@ class UserverConan(ConanFile):
                         'requires': ['core'] + grpc(),
                     },
                     {
-                        'target': 'grpc-handlers_proto',
-                        'lib': 'grpc-handlers_proto',
+                        'target': 'grpc-handlers-proto',
+                        'lib': 'grpc-handlers-proto',
                         'requires': ['core'] + grpc(),
                     },
                     {
@@ -528,6 +534,12 @@ class UserverConan(ConanFile):
                     )
                 else:
                     self.cpp_info.components[conan_component].libs = [lib_name]
+                if cmake_component == 'universal':
+                    self.cpp_info.components[
+                        cmake_component
+                    ].includedirs.append(
+                        os.path.join('include', 'function_backports'),
+                    )
                 if cmake_component == 'core':
                     self.cpp_info.components[conan_component].libs.append(
                         get_lib_name('core-internal'),

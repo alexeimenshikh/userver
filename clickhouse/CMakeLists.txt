@@ -41,8 +41,6 @@ target_include_directories(${PROJECT_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${USERVER_THIRD_PARTY_DIRS}/clickhouse-cpp
-    ${USERVER_THIRD_PARTY_DIRS}/clickhouse-cpp/contrib
 )
 
 if (USERVER_IS_THE_ROOT_PROJECT)
@@ -71,7 +69,7 @@ if (USERVER_IS_THE_ROOT_PROJECT)
       --gtest_output=xml:${CMAKE_BINARY_DIR}/test-results/${PROJECT_NAME}_chtest.xml
   )
   set_tests_properties(${PROJECT_NAME}_chtest PROPERTIES ENVIRONMENT
-          "TESTSUITE_CLICKHOUSE_SERVER_START_TIMEOUT=30.0")
+          "TESTSUITE_CLICKHOUSE_SERVER_START_TIMEOUT=120.0")
 
   add_subdirectory(functional_tests)
 endif()

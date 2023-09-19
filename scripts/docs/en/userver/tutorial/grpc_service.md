@@ -2,8 +2,7 @@
 
 ## Before you start
 
-Make sure that you can compile and run core tests and read a basic example @ref
-md_en_userver_tutorial_hello_service.
+Make sure that you can compile and run core tests and read a basic example @ref scripts/docs/en/userver/tutorial/hello_service.md.
 
 ## Step by step guide
 
@@ -69,7 +68,7 @@ make userver-samples-grpc_service
 
 The sample could be started by running
 `make start-userver-samples-grpc_service`. The command would invoke
-@ref md_en_userver_functional_testing "testsuite start target" that sets proper
+@ref scripts/docs/en/userver/functional_testing.md "testsuite start target" that sets proper
 paths in the configuration files and starts the service.
 
 To start the service manually run
@@ -80,7 +79,7 @@ The service is available locally at port 8091 (as per our `static_config.yaml`).
 
 
 ### Functional testing
-To implement @ref md_en_userver_functional_testing "Functional tests" for the
+To implement @ref scripts/docs/en/userver/functional_testing.md "Functional tests" for the
 service some preparational steps should be done.
 
 #### Preparations
@@ -132,7 +131,7 @@ See the full example at:
 ----------
 
 @htmlonly <div class="bottom-nav"> @endhtmlonly
-⇦ @ref md_en_userver_tutorial_flatbuf_service | @ref md_en_userver_tutorial_postgres_service ⇨
+⇦ @ref scripts/docs/en/userver/tutorial/flatbuf_service.md | @ref scripts/docs/en/userver/tutorial/postgres_service.md ⇨
 @htmlonly </div> @endhtmlonly
 
 @example samples/grpc_service/grpc_service.cpp

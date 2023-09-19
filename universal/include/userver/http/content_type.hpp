@@ -20,7 +20,7 @@ class MalformedContentType : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-/// @ingroup userver_containers
+/// @ingroup userver_universal userver_containers
 ///
 /// @brief Content-Type representation
 class ContentType {
@@ -85,6 +85,7 @@ std::ostream& operator<<(std::ostream&, const ContentType&);
 
 namespace content_type {
 
+extern const ContentType kApplicationOctetStream;
 extern const ContentType kApplicationJson;
 extern const ContentType kTextPlain;
 

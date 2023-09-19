@@ -8,7 +8,7 @@ good ideas are discussed, big and important ones go to the Roadmap. We also
 have our in-house feature requests, those could be also found in Roadmap.
 
 Important or interesting features go to the changelog as they get implemented.
-Note that there's also a @ref md_en_userver_security_changelog.
+Note that there's also a @ref scripts/docs/en/userver/security_changelog.md.
 
 Changelog news also go to the
 [userver framework news channel](https://t.me/userver_news).
@@ -17,14 +17,12 @@ Changelog news also go to the
 ## Roadmap
 
 
-### Plans for the first release (in a three months!)
+### Plans for the first release (in a two months!)
 
-* Add web interface to the [uservice-dynconf](https://github.com/userver-framework/uservice-dynconf)
-  * ✓ Add component to serve static pages
+* ✓ Add component to serve static pages
 * ✓ Migrate userver-only related CI checks to the GithubCI
-* Migrate to upstream versions of formatters
 * ✓ Improve documentation
-  * ✓ Improve @ref md_en_userver_framework_comparison
+  * ✓ Improve @ref scripts/docs/en/userver/framework_comparison.md
   * ✓ Add TCP acceptor sample
   * ✓ Add gRPC testsuite mock sample
   * ✓ Add reference sections for the Python fixtures
@@ -44,18 +42,98 @@ Changelog news also go to the
   * ✓ Clickhouse
   * ✓ gRPC
 * Enable PostgreSQL pipelining
-* Implement and enable Deadline Propagation
+* ✓ Implement and enable Deadline Propagation
   * ✓ HTTP Client
   * ✓ HTTP Server
   * ✓ Mongo
-  * PostgreSQL
-  * Redis
-  * gRPC
+  * ✓ PostgreSQL
+  * ✓ Redis
+  * ✓ gRPC
 * ✓ Implement streaming API for the HTTP
+
+### Plans for the next release
+
+* Add web interface to the [uservice-dynconf](https://github.com/userver-framework/uservice-dynconf)
 * Add basic Kafka driver.
+* Add YDB driver.
 
 
 ## Changelog
+
+
+### Beta (August 2023)
+
+* Deadline Propagation is now implemented and
+  @ref scripts/docs/en/userver/deadline_propagation.md "documented".
+
+* Projects from [Yandex Schools](https://academy.yandex.ru/schools):
+  * Documentation was redesigned by [hellenisaeva](https://github.com/hellenisaeva)
+    and [MariaGrinchenko](https://github.com/MariaGrinchenko); new design was
+    made up by [Fedor Alekseev](https://github.com/atlz253),
+    [fleshr](https://github.com/fleshr), [ZenkoWu](https://github.com/ZenkoWu),
+    [Michael Talalaev](https://github.com/InfinityScripter); the whole process
+    was managed by [Oleg Komarov](https://github.com/0GE1) with feedback from
+    marketing specialist [makachusha](https://github.com/makachusha).
+    Many thanks to all the participants for the great work.
+  * Implemented initial API for RFC 7616 - HTTP Digest Access Authentication,
+    thanks to [Almaz Shagiev](https://github.com/bashkirian),
+    [Konstantin Antoniadi](https://github.com/KonstantinAntoniadi),
+    [Ilya Golosov](https://github.com/bookWorm21), and
+    [Niyaz](https://github.com/mnink275) for multiple PRs!
+  * std::bitset<N>, std::array<bool, N>, userver::utils::Flags<Enum> and integral
+    values are now mapped to PostgreSQL bit and bit varying types. Thanks to
+    [dsaa27](https://github.com/dsaa27) and 
+    [bshirokov](https://github.com/bshirokov) for the PRs!
+  * Initial `Realmedium` sample was implemented and moved into a separate
+    repository at [userver-framework/realmedium_sample](https://github.com/userver-framework/realmedium_sample).
+    Thanks to [berholz](https://github.com/berholz),
+    [rumxcola](https://github.com/rumxcola),
+    [Konstantin Artemev](https://github.com/rumxcola),
+    [GasikPasik](https://github.com/GasikPasik),
+    [Anna Volkova](https://github.com/etoanita),
+    [Nikita Semenov](https://github.com/NikitaSemenov1),
+    [Daniil Boriskin](https://github.com/Riferus),
+    [VVendor](https://github.com/VVendor) for the PR!
+
+* Metrics for CPU usage of particular threads of task processors are now
+  available via new engine::TaskProcessorsLoadMonitor component.
+
+* gRPC and HTTP handler metrics were switched to utils::statistics::Rate,
+  leading to better handling of service start/stop by metrics storage.
+
+* server::Server now returns HTTP header
+  "Content-Type: application/octet-stream" if the content type was not set.
+
+* Implemented `ToString(utils::StrongTypedef<floating point>)`, thanks to
+  [Daniil Shvalov](https://github.com/danilshvalov) for the PR.
+
+* Optimizations:
+  * Signifiacally optimized JSON DOM access to a non-existing element.
+  * Logging now does not lock a mutex in fs-task-processor on each log record.
+  * Up to 3 times faster logging due to multiple minor tweaks with data copy and
+    memory prereserving.
+  * The new asynchronous engine::io::sys::linux::Inotify driver for Linux allows
+    subscriptions to filesystem events. Thanks to it the fs::FsCacheClient now
+    reacts faster.
+
+* Docs:
+  * @ref scripts/docs/en/userver/tutorial/auth_postgres.md now provides a
+    PostgreSQL migrations sample.
+  * Fixed broken refs to hello_service page, thanks to
+    [Danil Sidoruk](https://github.com/eoan-ermine) for the PR!
+  * @ref userver_universal group was added with information on contents of
+    `userver-universal` CMake target.
+  * Documented @ref scripts/docs/en/userver/service_monitor.md "PostgreSQL metrics"
+
+* Build:
+  * Dropped spdlog dependency
+  * [CPM library](https://github.com/cpm-cmake/CPM.cmake) is now used for managing
+    third-party dependencies.
+  * Fixed cryptopp compilation error, thanks to
+    [Daniil Shvalov](https://github.com/danilshvalov) for the PR!
+  * Fixed -Wsign-conversion -Wctad-maybe-unsupported warnings in
+    utils::TrivialBiMap, thanks to [darktime78](https://github.com/darktime78)
+    for the PR!
 
 
 ### Beta (July 2023)
@@ -66,7 +144,7 @@ Changelog news also go to the
 * Non-coroutine `userver-universal` CMake target was refactored and is now used
   by the whole framework as a basic dependency. Compile times dropped down
   drastically for building the whole framework from scratch.
-* Added a non-coroutine usage example @ref md_en_userver_tutorial_json_to_yaml.
+* Added a non-coroutine usage example @ref scripts/docs/en/userver/tutorial/json_to_yaml.md.
 * It is now possible to subscribe to `SIGUSR1` and `SIGUSR2` in the same class.
   Thanks to [Beshkent](https://github.com/Beshkent) for the bug report.
 * Dynamic config management commands were added to `uctl` tool.
@@ -128,11 +206,11 @@ Changelog news also go to the
 
 * Docs and diagnostics:
   * gRPC metrics were documented.
-  * New documentation page @ref md_en_userver_http_server.
+  * New documentation page @ref scripts/docs/en/userver/http_server.md.
   * More debug logs for the Mongo error, thanks to
     [fominartem0](https://github.com/fominartem0) for the PR.
   * Improved diagnostics for CurrentSpan() and testsuite tasks.
-  * Multiple typos fixed at @ref md_en_userver_framework_comparison page, thanks
+  * Multiple typos fixed at @ref scripts/docs/en/userver/framework_comparison.md page, thanks
     to [Michael](https://github.com/technothecow) for the PR.
 
 * Build:
@@ -176,10 +254,10 @@ Changelog news also go to the
 
 * Docs:
   * Some metrics were documented, a human-readable format of metrics
-    is now used in documentation. See @ref md_en_userver_service_monitor.
-  * Custom @ref md_en_userver_404 "404 page".
-  * New pages, including @ref md_en_userver_faq, @ref md_en_userver_periodics
-    and @ref md_en_userver_deploy_env.
+    is now used in documentation. See @ref scripts/docs/en/userver/service_monitor.md.
+  * Custom @ref scripts/docs/en/userver/.md404 "404 page".
+  * New pages, including @ref scripts/docs/en/userver/faq.md, @ref scripts/docs/en/userver/periodics.md
+    and @ref scripts/docs/en/userver/deploy_env.md.
 
 * Build:
   * Arch Linux instructions were improved, thanks to
@@ -277,11 +355,11 @@ Changelog news also go to the
     implementation of the sink does not rely on spdlog implementation.
   * Configuration step was made much faster.
   * Makefile was simplified and only up-to-date targets were left.
-  * Added a script to prepare docker build, see @ref md_en_userver_docker for
+  * Added a script to prepare docker build, see @ref scripts/docs/en/userver/docker.md for
     more info.
   * Scripts for generating CMakeLists were simplified and cleared from internal
     stuff.
-  * Added missing dependencies to @ref md_en_deps_ubuntu_20_04 and sorted all
+  * Added missing dependencies to @ref scripts/docs/en/deps_ubuntu_.md20_04 and sorted all
     the dependencies, thanks to [Anatoly Shirokov](https://github.com/anatoly-spb)
     for the PR.
 * Statistics and metrics now do additional lifetime checks in debug builds to
@@ -332,7 +410,7 @@ Changelog news also go to the
   a part of the public API.
 * Added a blazing fast utils::TrivialBiMap.
 * HTTP Streaming is now considered production ready, see
-  @ref md_en_userver_http_server for docs.
+  @ref scripts/docs/en/userver/http_server.md for docs.
 * Testsuite fixtures were improved:
   * Fixtures for detecting service readiness now work out of the box for
     services without server::handlers::Ping
@@ -345,7 +423,7 @@ Changelog news also go to the
     components::Secdist in tests.
   * Many fixtures were documented at
     @ref userver_testsuite_fixtures, pytest plugins were documented in
-    tutorials and at @ref md_en_userver_functional_testing.
+    tutorials and at @ref scripts/docs/en/userver/functional_testing.md.
 * Optimizations:
   * Now the engine does less random number generator invocations for HTTP
     handling.
@@ -378,7 +456,7 @@ Changelog news also go to the
   * improved unit tests re-entrance
   * multiple new chaos and metrics tests
   * improved testsuite diagnostics
-* Added a @ref md_en_userver_tutorial_auth_postgres sample.
+* Added a @ref scripts/docs/en/userver/tutorial/auth_postgres.md sample.
 * Added an option `set_tracing_headers` to disable HTTP tracing headers, thanks
   to [Ivan Trofimov](https://github.com/itrofimow) for the PR.
 * Fixed race in RabbitMQ sample, thanks to
@@ -403,7 +481,7 @@ Changelog news also go to the
   for the PR.
 * Fixed formats::yaml exception message typo, thanks to the
   [Denis Galeev](https://github.com/dengaleev) for the PR.
-* Added gRPC testsuite mock sample at @ref md_en_userver_tutorial_grpc_service.
+* Added gRPC testsuite mock sample at @ref scripts/docs/en/userver/tutorial/grpc_service.md.
 * Added engine::TaskCancellationToken to simplify async drivers development.
 * Simplified build steps, in particular:
   * Added `USERVER_PYTHON_PATH` to specify the path to the python3 binary for
@@ -416,9 +494,9 @@ Changelog news also go to the
 * Experimental support for Conan packaging, many thanks to
   [Anton](https://github.com/Jihadist) for the PR.
 * Prometheus and Graphite metrics formats were added, see
-  @ref md_en_userver_service_monitor for details.
+  @ref scripts/docs/en/userver/service_monitor.md for details.
 * Initial support for chaos testing was added, see
-  @ref md_en_userver_chaos_testing for more info.
+  @ref scripts/docs/en/userver/chaos_testing.md for more info.
 * Generic Escape implementation for ranges was added to Clickhouse, thanks to
   [Ivan Trofimov](https://github.com/itrofimow) for the PR.
 * TLS/SSL support for Redis.
@@ -436,7 +514,7 @@ Changelog news also go to the
   * Faster async cancellations for PostgreSQL;
   * Avoid using dynamic_cast in multiple places;
   * Avoid calling `std::chrono::steady_clock::now()` in multiple places.
-* gRPC mockserver support (see @ref md_en_userver_tutorial_grpc_service).
+* gRPC mockserver support (see @ref scripts/docs/en/userver/tutorial/grpc_service.md).
 * gRPC now provides an efficient API for async execution of requests without
   additional `utils::Async` invocations.
 * Build fixes for older platforms, thanks to
@@ -444,7 +522,7 @@ Changelog news also go to the
 * components::Logging now can output logs to UNIX sockets.
 * Now the "help wanted" issues at github have additional tags "good first issue"
   and "big", to help you to choose between a good starting issue and a big
-  feature. See @ref md_en_userver_development_releases for more info.
+  feature. See @ref scripts/docs/en/userver/development/releases.md for more info.
 
 
 ### Beta (September 2022)
@@ -501,7 +579,7 @@ Changelog news also go to the
 * Added engine::io::WritableBase and engine::io::RwBase, thanks to
   [Stas Zvyagin](https://github.com/szvyagin-gj) for the idea.
 * Added components::TcpAcceptorBase with new tutorials
-  @ref md_en_userver_tutorial_tcp_service and @ref md_en_userver_tutorial_tcp_full,
+  @ref scripts/docs/en/userver/tutorial/tcp_service.md and @ref scripts/docs/en/userver/tutorial/tcp_full.md,
   thanks to [Stas Zvyagin](https://github.com/szvyagin-gj) for the idea and
   usage samples at https://github.com/szvyagin-gj/unetwork.
 * Fixed comparison operator for UserScope, thanks to
@@ -544,7 +622,7 @@ Changelog news also go to the
   signals.
 * You can now allow skipping the component in the static config file by
   specializing the components::kConfigFileMode,
-  see @ref md_en_userver_component_system "the documentation".
+  see @ref scripts/docs/en/userver/component_system.md "the documentation".
 * The PostgreSQL driver now requires explicit serialization methods when
   working with enum.
 * Optimized CPU consumption for handlers that do not log requests or responses.
@@ -557,15 +635,15 @@ Changelog news also go to the
   [Evgeny Medvedev](https://github.com/kargatpwnz).
 * Docker support: [base image for development](https://github.com/userver-framework/docker-userver-build-base/pkgs/container/docker-userver-build-base),
   docker-compose.yaml for the userver with build and test targets.
-  See @ref md_en_userver_tutorial_build
+  See @ref scripts/docs/en/userver/tutorial/build.md
 * Docs improved: removed internal links; added
-  @ref md_en_userver_framework_comparison,
-  @ref md_en_userver_supported_platforms, @ref md_en_userver_beta_state,
-  @ref md_en_userver_security_changelog,
-  @ref md_en_userver_profile_context_switches,
-  @ref md_en_userver_driver_guide,
+  @ref scripts/docs/en/userver/framework_comparison.md,
+  @ref scripts/docs/en/userver/supported_platforms.md,
+  @ref scripts/docs/en/userver/security_changelog.md,
+  @ref scripts/docs/en/userver/profile_context_switches.md,
+  @ref scripts/docs/en/userver/driver_guide.md,
   @md_en_userver_task_processors_guide,
-  @ref md_en_userver_os_signals and @ref md_en_userver_roadmap_and_changelog.
+  @ref scripts/docs/en/userver/os_signals.md and @ref scripts/docs/en/userver/roadmap_and_changelog.md.
 * AArch64 build supported. Tests pass successfully
 * HTTP headers hashing not vulnerable to HashDOS any more, thanks to Ivan
   Trofimov for the report.
@@ -588,6 +666,6 @@ Changelog news also go to the
 ----------
 
 @htmlonly <div class="bottom-nav"> @endhtmlonly
-⇦ @ref md_en_userver_beta_state | @ref md_en_userver_faq ⇨
+⇦ @ref scripts/docs/en/userver/development/releases.md | @ref scripts/docs/en/userver/faq.md ⇨
 @htmlonly </div> @endhtmlonly
 

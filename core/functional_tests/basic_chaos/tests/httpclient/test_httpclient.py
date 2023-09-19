@@ -2,32 +2,33 @@ import pytest
 
 
 @pytest.fixture
-def call(service_client, for_client_gate_port):
-    async def _call(htype='common', **args):
+def call(service_client, for_client_gate_port, gate):
+    async def _call(htype='common', headers=None, **args):
         return await service_client.get(
             '/chaos/httpclient',
             params={'type': htype, 'port': str(for_client_gate_port), **args},
+            headers=headers or {},
         )
 
     return _call
 
 
 @pytest.fixture
-async def mock_test(mockserver):
+def ok_mock(mockserver):
     @mockserver.handler('/test')
-    async def _mock(request):
+    async def mock(_request):
         return mockserver.make_response('OK!')
 
-    return _mock
+    return mock
 
 
-async def test_ok(call, gate, mock_test):
+async def test_ok(call, ok_mock):
     response = await call()
     assert response.status == 200
     assert response.text == 'OK!'
 
 
-async def test_stop_accepting(call, gate, mock_test):
+async def test_stop_accepting(call, gate, ok_mock):
     response = await call()
     assert response.status == 200
     assert gate.connections_count() >= 1
@@ -63,7 +64,7 @@ async def test_close_after_headers(call, gate, mockserver):
     assert response.status == 200
 
 
-async def test_required_headers(call, gate, mock_test):
+async def test_required_headers(call, gate, ok_mock):
     required_headers = ['X-YaRequestId', 'X-YaSpanId', 'X-YaTraceId']
 
     response = await call()

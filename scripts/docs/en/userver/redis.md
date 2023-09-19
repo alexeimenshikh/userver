@@ -13,7 +13,9 @@ versa.
 * Support for bulk operations (MGET, MSET, etc); driver splits data into smaller
   chunks if necessary to increase server responsiveness;
 * Support for different strategies of choosing the most suitable Redis instance;
-* Request timeouts management with transparent retries.
+* Request timeouts management with transparent retries;
+* @ref scripts/docs/en/userver/deadline_propagation.md
+* Cluster autotopology 
 
 ## Metrics
 
@@ -28,7 +30,7 @@ versa.
 | redis.timings         | query timings                            |
 | redis.errors          | counter of failed requests               |
 
-See @ref md_en_userver_service_monitor for info on how to get the metrics.
+See @ref scripts/docs/en/userver/service_monitor.md for info on how to get the metrics.
 
 ## Usage
 
@@ -55,8 +57,45 @@ that executes the Redis request:
 Redis driver does not guarantee that the cancelled request was not executed
 by the server.
 
+
+### Redis Cluster Autotopology
+
+Cluster autotopology makes it possible to do resharding of the cluster
+without Secdist changes and service restart.
+
+With this feature entries in the Secdist are now treated not as a list of all
+the cluster hosts, but only as input points through which the service discowers
+the configuration of the entire cluster. Therefore, it is not recommended
+to delete instances that are listed in secdist from the cluster.
+
+The cluster configuration is checked
+* at the start of the service
+* and periodically
+* and if a MOVED response is received from Redis
+
+If a change in the cluster topology was detected during the check
+(hashslot distribution change, master change, or new replicas discowered),
+then the internal representation of the topology is recreated,
+the new topology is gets ready (new connections may appear in it),
+and after that the active topology is replaced.
+
+#### Enabling/Disabling Redis Cluster Autotopology
+
+At the moment aotopology could be nables via an experiment in static config of
+a service:
+
+```
+#yaml
+userver_experiments:
+  - redis-cluster-autotopology
+```
+
+The autotopology could be disabled by the dynamic config option
+REDIS_CLUSTER_AUTOTOPOLOGY_ENABLED_V2.
+
+
 ----------
 
 @htmlonly <div class="bottom-nav"> @endhtmlonly
-⇦ @ref md_en_userver_mongodb | @ref clickhouse_driver ⇨
+⇦ @ref scripts/docs/en/userver/mongodb.md | @ref clickhouse_driver ⇨
 @htmlonly </div> @endhtmlonly

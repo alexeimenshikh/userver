@@ -5,7 +5,7 @@
 #include <userver/utils/statistics/writer.hpp>
 #include <userver/utils/underlying_value.hpp>
 
-#include <userver/ugrpc/impl/status_codes.hpp>
+#include <userver/ugrpc/status_codes.hpp>
 
 USERVER_NAMESPACE_BEGIN
 
@@ -21,9 +21,12 @@ struct AsRateAndGauge final {
 
 void DumpMetric(utils::statistics::Writer& writer,
                 const AsRateAndGauge& stats) {
-  // old format, without 'rate'
-  writer = stats.value.value;
+  // old format. Currently it is 'rate' as well, as we are
+  // in our final stages of fully moving to RateCounter
+  // See https://st.yandex-team.ru/TAXICOMMON-6872
+  writer = stats.value;
   // new format, with 'rate' support but into different sensor
+  // This sensor will be deleted soon.
   writer["v2"] = stats.value;
 }
 
@@ -75,7 +78,7 @@ void DumpMetric(utils::statistics::Writer& writer,
       total_requests += count;
       if (code != grpc::StatusCode::OK) error_requests += count;
       status.ValueWithLabels(AsRateAndGauge{count},
-                             {"grpc_code", ugrpc::impl::ToString(code)});
+                             {"grpc_code", ugrpc::ToString(code)});
     }
   }
 

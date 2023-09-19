@@ -14,6 +14,7 @@
 #include <userver/engine/task/task_processor_fwd.hpp>
 #include <userver/logging/level.hpp>
 #include <userver/logging/null_logger.hpp>
+#include <userver/utils/function_ref.hpp>
 #include <userver/utils/statistics/fwd.hpp>
 #include <userver/yaml_config/fwd.hpp>
 
@@ -30,7 +31,7 @@ struct ServerConfig final {
   /// The port to listen to. If `0`, a free port will be picked automatically.
   /// If none, the ports have to be configured programmatically using
   /// Server::WithServerBuilder.
-  std::optional<int> port{};
+  std::optional<int> port{0};
 
   /// Optional grpc-core channel args
   /// @see https://grpc.github.io/grpc/core/group__grpc__arg__keys.html
@@ -53,7 +54,7 @@ struct ServerConfig final {
 /// Usually retrieved from ugrpc::server::ServerComponent.
 class Server final {
  public:
-  using SetupHook = std::function<void(grpc::ServerBuilder&)>;
+  using SetupHook = utils::function_ref<void(grpc::ServerBuilder&)>;
 
   /// @brief Start building the server
   explicit Server(ServerConfig&& config,
@@ -74,7 +75,7 @@ class Server final {
 
   /// @brief For advanced configuration of the gRPC server
   /// @note The ServerBuilder must not be stored and used outside of `setup`.
-  void WithServerBuilder(SetupHook&& setup);
+  void WithServerBuilder(SetupHook setup);
 
   /// @returns the completion queue for clients
   /// @note All RPCs are cancelled on 'Stop'. If you need to perform requests

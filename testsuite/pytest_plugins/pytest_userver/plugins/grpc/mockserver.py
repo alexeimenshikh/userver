@@ -1,13 +1,14 @@
 """
 Mocks for the gRPC servers.
 
-@sa @ref md_en_userver_tutorial_grpc_service
+@sa @ref scripts/docs/en/userver/tutorial/grpc_service.md
 """
 
 # pylint: disable=no-member
 import asyncio
 import contextlib
 import functools
+import socket
 
 import grpc
 import pytest
@@ -52,11 +53,13 @@ def _grpc_mockserver_endpoint(pytestconfig):
     port = pytestconfig.option.grpc_mockserver_port
     if pytestconfig.option.service_wait or pytestconfig.option.service_disable:
         port = port or DEFAULT_PORT
+    if port == 0:
+        port = _find_free_port()
     return f'{pytestconfig.option.grpc_mockserver_host}:{port}'
 
 
 @pytest.fixture(scope='session')
-def grpc_mockserver_endpoint(pytestconfig, _grpc_mockserver_and_port) -> str:
+def grpc_mockserver_endpoint(pytestconfig, _grpc_port) -> str:
     """
     Returns the gRPC endpoint to start the mocking server that is set by
     command line `--grpc-mockserver-host` and `--grpc-mockserver-port` options.
@@ -67,19 +70,26 @@ def grpc_mockserver_endpoint(pytestconfig, _grpc_mockserver_and_port) -> str:
     @snippet samples/grpc_service/tests/conftest.py  Prepare configs
     @ingroup userver_testsuite_fixtures
     """
-    _, port = _grpc_mockserver_and_port
-    return f'{pytestconfig.option.grpc_mockserver_host}:{port}'
+    return f'{pytestconfig.option.grpc_mockserver_host}:{_grpc_port}'
+
+
+def _find_free_port() -> int:
+    with contextlib.closing(
+            socket.socket(socket.AF_INET6, socket.SOCK_STREAM),
+    ) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
 
 
 @pytest.fixture(scope='session')
-def _grpc_mockserver_and_port(_grpc_mockserver_endpoint):
-    server = grpc.aio.server()
-    port = server.add_insecure_port(_grpc_mockserver_endpoint)
-    return server, port
+def _grpc_port(_grpc_mockserver_endpoint):
+    _, port = _grpc_mockserver_endpoint.rsplit(':', 1)
+    return int(port)
 
 
 @pytest.fixture(scope='session')
-async def grpc_mockserver(_grpc_mockserver_and_port):
+async def grpc_mockserver(_grpc_mockserver_endpoint):
     """
     Returns the gRPC mocking server.
 
@@ -89,7 +99,8 @@ async def grpc_mockserver(_grpc_mockserver_and_port):
     @snippet samples/grpc_service/tests/conftest.py  Prepare server mock
     @ingroup userver_testsuite_fixtures
     """
-    server, _ = _grpc_mockserver_and_port
+    server = grpc.aio.server()
+    server.add_insecure_port(_grpc_mockserver_endpoint)
     server_task = asyncio.create_task(server.start())
 
     try:
@@ -130,8 +141,11 @@ def _create_servicer_mock(servicer_class):
     def wrap_grpc_method(name, default_method):
         @functools.wraps(default_method)
         async def run_method(self, *args, **kwargs):
-            method = mock.get(name, default_method)
-            return await method(*args, **kwargs)
+            method = mock.get(name, None)
+            if method is not None:
+                return await method(*args, **kwargs)
+            else:
+                return await default_method(self, *args, **kwargs)
 
         return run_method
 

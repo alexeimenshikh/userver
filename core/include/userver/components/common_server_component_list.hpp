@@ -26,6 +26,8 @@ namespace components {
 /// * server::handlers::ServerMonitor
 /// * server::handlers::TestsControl
 /// * components::AuthCheckerSettings
+/// * server::handlers::auth::DigestCheckerSettingsComponent
+/// * server::handlers::auth::NonceCacheSettingsComponent
 /// * congestion_control::Component
 /// * components::HttpServerSettings
 /// * tracing::DefaultTracingManagerLocator

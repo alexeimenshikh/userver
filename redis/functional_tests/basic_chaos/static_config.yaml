@@ -36,16 +36,41 @@ components_manager:
             fs-cache-path: ''
 
         dynamic-config-fallbacks:
-            fallback-path: /etc/redis_basic_chaos/dynamic_config_fallback.json
+            load-enabled: false
+        dynamic-config-client:
+            config-url: $config-server-url
+            http-retries: 5
+            http-timeout: 20s
+            service-name: testsuite-support
+        dynamic-config-client-updater:
+            config-settings: false
+            fallback-path: $config-fallback
+            full-update-interval: 1m
+            load-only-my-values: true
+            store-enabled: true
+            update-interval: 5s
 
         dns-client:
             fs-task-processor: fs-task-processor
 
         secdist: {}
+
         default-secdist-provider:
             config: /etc/redis_service/secure_data.json
             missing-ok: true
             environment-secrets-key: SECDIST_CONFIG
+
+        http-client:
+            fs-task-processor: main-task-processor
+
+        tests-control:
+            method: POST
+            path: /tests/{action}
+            skip-unregistered-testpoints: true
+            task_processor: main-task-processor
+            testpoint-timeout: 10s
+            testpoint-url: $mockserver/testpoint
+            throttling_enabled: false
 
     coro_pool:
         initial_size: 500
@@ -61,5 +86,3 @@ components_manager:
             worker_threads: 4
 
     default_task_processor: main-task-processor
-userver_experiments:
-  - redis-deadline-propagation

@@ -146,7 +146,11 @@ utils::impl::WrappedCallBase& TaskBase::GetPayload() const noexcept {
 }
 
 void TaskBase::Terminate(TaskCancellationReason reason) noexcept {
-  if (context_ && !IsFinished()) {
+  if (!context_) {
+    return;
+  }
+
+  if (!IsFinished()) {
     // We are not providing an implicit sync from outside
     // because it's really easy to get a deadlock this way
     // e.g. between global event thread pool and task processor
@@ -154,6 +158,10 @@ void TaskBase::Terminate(TaskCancellationReason reason) noexcept {
 
     const TaskCancellationBlocker cancel_blocker;
     Wait();
+  }
+
+  if (reason == TaskCancellationReason::kAbandoned) {
+    context_->ResetPayload();
   }
 }
 

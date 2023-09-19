@@ -1,6 +1,7 @@
 #include "http_request_impl.hpp"
 
 #include <server/handlers/http_handler_base_statistics.hpp>
+#include <userver/engine/io/socket.hpp>
 #include <userver/engine/task/task.hpp>
 #include <userver/http/common_headers.hpp>
 #include <userver/http/parser/http_request_parse_args.hpp>
@@ -259,6 +260,11 @@ bool HttpRequestImpl::IsBodyCompressed() const {
   return !encoding.empty() && encoding != "identity";
 }
 
+void HttpRequestImpl::DoUpgrade(std::unique_ptr<engine::io::RwBase>&& socket,
+                                engine::io::Sockaddr&& peer_name) const {
+  upgrade_websocket_cb_(std::move(socket), std::move(peer_name));
+}
+
 void HttpRequestImpl::SetPathArgs(
     std::vector<std::pair<std::string, std::string>> args) {
   path_args_.clear();
@@ -281,8 +287,8 @@ void HttpRequestImpl::AccountResponseTime() {
   UASSERT(request_statistics_);
   auto timing = std::chrono::duration_cast<std::chrono::milliseconds>(
       finish_send_response_time_ - start_time_);
-  request_statistics_->Account(GetMethod(),
-                               handlers::HttpRequestStatisticsEntry{timing});
+  request_statistics_->ForMethod(GetMethod())
+      .Account(handlers::HttpRequestStatisticsEntry{timing});
 }
 
 void HttpRequestImpl::MarkAsInternalServerError() const {

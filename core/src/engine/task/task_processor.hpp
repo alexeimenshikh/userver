@@ -13,6 +13,8 @@
 #include <engine/task/task_counter.hpp>
 #include <engine/task/task_processor_config.hpp>
 #include <engine/task/task_queue.hpp>
+#include <utils/statistics/thread_statistics.hpp>
+
 #include <userver/engine/impl/detached_tasks_sync_block.hpp>
 #include <userver/logging/logger.hpp>
 
@@ -73,6 +75,8 @@ class TaskProcessor final {
 
   logging::LoggerPtr GetTaskTraceLogger() const;
 
+  std::vector<std::uint8_t> CollectCurrentLoadPct() const;
+
  private:
   void Cleanup() noexcept;
 
@@ -108,6 +112,9 @@ class TaskProcessor final {
   std::atomic<bool> profiler_force_stacktrace_{false};
   std::atomic<bool> is_shutting_down_{false};
   std::atomic<bool> task_trace_logger_set_{false};
+
+  std::unique_ptr<utils::statistics::ThreadPoolCpuStatsStorage>
+      cpu_stats_storage_{nullptr};
 };
 
 /// Register a function that runs on all threads on task processor creation.

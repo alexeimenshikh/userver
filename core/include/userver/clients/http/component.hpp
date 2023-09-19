@@ -46,7 +46,7 @@ namespace components {
 /// testsuite-timeout | if set, force the request timeout regardless of the value passed in code | -
 /// testsuite-allowed-url-prefixes | if set, checks that all URLs start with any of the passed prefixes, asserts if not. Set for testing purposes only. | ''
 /// dns_resolver | server hostname resolver type (getaddrinfo or async) | 'async'
-/// set-deadline-propagation-header | whether to set http::common::kXYaTaxiClientTimeoutMs request header | true
+/// set-deadline-propagation-header | whether to set http::common::kXYaTaxiClientTimeoutMs request header, see @ref scripts/docs/en/userver/deadline_propagation.md | true
 /// plugins | Plugin names to apply. A plugin component is called "http-client-plugin-" plus the plugin name.
 ///
 /// ## Static configuration example:

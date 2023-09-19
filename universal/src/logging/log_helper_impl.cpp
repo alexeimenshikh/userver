@@ -1,5 +1,10 @@
 #include "log_helper_impl.hpp"
 
+#include <fmt/chrono.h>
+#include <fmt/compile.h>
+#include <fmt/format.h>
+
+#include <userver/compiler/impl/constexpr.hpp>
 #include <userver/logging/impl/logger_base.hpp>
 #include <userver/utils/assert.hpp>
 #include <userver/utils/encoding/tskv.hpp>
@@ -22,72 +27,146 @@ char GetSeparatorFromLogger(LoggerRef logger) {
   UINVARIANT(false, "Invalid logging::Format enum value");
 }
 
+using TimePoint = std::chrono::system_clock::time_point;
+
+auto FractionalMicroseconds(TimePoint time) noexcept {
+  return std::chrono::time_point_cast<std::chrono::microseconds>(time)
+             .time_since_epoch()
+             .count() %
+         1'000'000;
+}
+
+std::string_view GetCurrentTimeString(TimePoint now) noexcept {
+  using SecondsTimePoint =
+      std::chrono::time_point<TimePoint::clock, std::chrono::seconds>;
+  constexpr std::string_view kTemplate = "0000-00-00T00:00:00";
+
+  thread_local USERVER_IMPL_CONSTINIT SecondsTimePoint cached_time{};
+  thread_local USERVER_IMPL_CONSTINIT char
+      cached_time_string[kTemplate.size()]{};
+
+  const auto rounded_now =
+      std::chrono::time_point_cast<std::chrono::seconds>(now);
+  if (rounded_now != cached_time) {
+    fmt::format_to(cached_time_string, FMT_COMPILE("{:%FT%T}"),
+                   fmt::localtime(std::chrono::system_clock::to_time_t(now)));
+    cached_time = rounded_now;
+  }
+  return {cached_time_string, kTemplate.size()};
+}
+
 }  // namespace
 
-LogHelper::Impl::int_type LogHelper::Impl::BufferStd::overflow(int_type c) {
-  return impl_.overflow(c);
+auto LogHelper::Impl::BufferStd::overflow(int_type c) -> int_type {
+  if (c == std::streambuf::traits_type::eof()) return c;
+  impl_.PutValuePart(static_cast<char>(c));
+  return c;
 }
 
 std::streamsize LogHelper::Impl::BufferStd::xsputn(const char_type* s,
                                                    std::streamsize n) {
-  return impl_.xsputn(s, n);
+  impl_.PutValuePart(std::string_view(s, n));
+  return n;
 }
 
 LogHelper::Impl::Impl(LoggerRef logger, Level level) noexcept
     : logger_(&logger),
-      level_(level),
+      level_(std::max(level, logger_->GetLevel())),
       key_value_separator_(GetSeparatorFromLogger(*logger_)) {
   static_assert(sizeof(LogHelper::Impl) < 4096,
                 "Structures with size more than 4096 would consume at least "
                 "8KB memory in allocator.");
+  if constexpr (utils::impl::kEnableAssert) {
+    debug_tag_keys_.emplace();
+  }
 }
 
-std::streamsize LogHelper::Impl::xsputn(const char_type* s, std::streamsize n) {
-  switch (encode_mode_) {
-    case Encode::kNone:
-      msg_.append(s, s + n);
-      break;
-    case Encode::kValue: {
-      utils::encoding::EncodeTskv(msg_, std::string_view(s, n),
-                                  utils::encoding::EncodeTskvMode::kValue);
-      break;
+void LogHelper::Impl::PutMessageBegin() {
+  UASSERT(msg_.size() == 0);
+
+  switch (logger_->GetFormat()) {
+    case Format::kTskv: {
+      constexpr std::string_view kTemplate =
+          "tskv\ttimestamp=0000-00-00T00:00:00.000000\tlevel=";
+      const auto now = TimePoint::clock::now();
+      const auto level_string = logging::ToUpperCaseString(level_);
+      msg_.resize(kTemplate.size() + level_string.size());
+      fmt::format_to(
+          msg_.data(), FMT_COMPILE("tskv\ttimestamp={}.{:06}\tlevel={}"),
+          GetCurrentTimeString(now), FractionalMicroseconds(now), level_string);
+      return;
     }
-    case Encode::kKeyReplacePeriod:
-      if (!utils::encoding::ShouldKeyBeEscaped({s, static_cast<size_t>(n)})) {
-        msg_.append(s, s + n);
-      } else {
-        utils::encoding::EncodeTskv(
-            msg_, std::string_view(s, n),
-            utils::encoding::EncodeTskvMode::kKeyReplacePeriod);
-      }
-      break;
+    case Format::kLtsv: {
+      constexpr std::string_view kTemplate =
+          "timestamp:0000-00-00T00:00:00.000000\tlevel:";
+      const auto now = TimePoint::clock::now();
+      const auto level_string = logging::ToUpperCaseString(level_);
+      msg_.resize(kTemplate.size() + level_string.size());
+      fmt::format_to(msg_.data(), FMT_COMPILE("timestamp:{}.{:06}\tlevel:{}"),
+                     GetCurrentTimeString(now), FractionalMicroseconds(now),
+                     level_string);
+      return;
+    }
+    case Format::kRaw: {
+      msg_.append(std::string_view{"tskv"});
+      return;
+    }
   }
-
-  return n;
+  UASSERT_MSG(false, "Invalid value of Format enum");
 }
 
-LogHelper::Impl::int_type LogHelper::Impl::overflow(int_type c) {
-  if (c == std::streambuf::traits_type::eof()) return c;
-  Put(c);
-  return c;
+void LogHelper::Impl::PutMessageEnd() { msg_.push_back('\n'); }
+
+void LogHelper::Impl::PutKey(std::string_view key) {
+  if (!utils::encoding::ShouldKeyBeEscaped(key)) {
+    PutRawKey(key);
+  } else {
+    UASSERT(!std::exchange(is_within_value_, true));
+    CheckRepeatedKeys(key);
+    msg_.push_back(utils::encoding::kTskvPairsSeparator);
+    utils::encoding::EncodeTskv(
+        msg_, key, utils::encoding::EncodeTskvMode::kKeyReplacePeriod);
+    msg_.push_back(key_value_separator_);
+  }
 }
 
-void LogHelper::Impl::Put(char_type c) {
-  switch (encode_mode_) {
-    case Encode::kNone:
-      msg_.push_back(c);
-      break;
-    case Encode::kValue:
-      utils::encoding::EncodeTskv(std::back_inserter(msg_),
-                                  static_cast<char>(c),
-                                  utils::encoding::EncodeTskvMode::kValue);
-      break;
-    case Encode::kKeyReplacePeriod:
-      utils::encoding::EncodeTskv(
-          std::back_inserter(msg_), static_cast<char>(c),
-          utils::encoding::EncodeTskvMode::kKeyReplacePeriod);
-      break;
-  }
+void LogHelper::Impl::PutRawKey(std::string_view key) {
+  UASSERT(!std::exchange(is_within_value_, true));
+  CheckRepeatedKeys(key);
+  const auto old_size = msg_.size();
+  msg_.resize(old_size + 1 + key.size() + 1);
+
+  auto* position = msg_.data() + old_size;
+  *(position++) = utils::encoding::kTskvPairsSeparator;
+  key.copy(position, key.size());
+  position += key.size();
+  *(position++) = key_value_separator_;
+}
+
+void LogHelper::Impl::PutValuePart(std::string_view value) {
+  UASSERT(is_within_value_);
+  utils::encoding::EncodeTskv(msg_, value,
+                              utils::encoding::EncodeTskvMode::kValue);
+}
+
+void LogHelper::Impl::PutValuePart(char text_part) {
+  UASSERT(is_within_value_);
+  utils::encoding::EncodeTskv(fmt::appender(msg_), text_part,
+                              utils::encoding::EncodeTskvMode::kValue);
+}
+
+LogBuffer& LogHelper::Impl::GetBufferForRawValuePart() noexcept {
+  UASSERT(is_within_value_);
+  return msg_;
+}
+
+void LogHelper::Impl::MarkValueEnd() noexcept {
+  UASSERT(std::exchange(is_within_value_, false));
+}
+
+void LogHelper::Impl::StartText() {
+  PutRawKey("text");
+  initial_length_ = msg_.size();
 }
 
 LogHelper::Impl::LazyInitedStream& LogHelper::Impl::GetLazyInitedStream() {
@@ -108,14 +187,15 @@ void LogHelper::Impl::LogTheMessage() const {
   logger_->Log(level_, message);
 }
 
-void LogHelper::Impl::MarkTextBegin() {
-  UASSERT_MSG(initial_length_ == 0, "MarkTextBegin must only be called once");
-  initial_length_ = msg_.size();
-}
-
 void LogHelper::Impl::MarkAsBroken() noexcept { logger_ = nullptr; }
 
 bool LogHelper::Impl::IsBroken() const noexcept { return !logger_; }
+
+void LogHelper::Impl::CheckRepeatedKeys(
+    [[maybe_unused]] std::string_view raw_key) {
+  UASSERT_MSG(debug_tag_keys_->insert(std::string{raw_key}).second,
+              fmt::format("Repeated tag in logs: '{}'", raw_key));
+}
 
 }  // namespace logging
 

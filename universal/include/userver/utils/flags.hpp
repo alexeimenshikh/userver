@@ -14,7 +14,7 @@ namespace utils {
 template <typename Enum>
 class AtomicFlags;
 
-/// @ingroup userver_containers
+/// @ingroup userver_universal userver_containers
 ///
 /// @brief Wrapper to extend enum with flags interface
 template <typename Enum>
@@ -39,6 +39,7 @@ class Flags final {
   constexpr bool operator!=(Flags) const;
 
   constexpr ValueType GetValue() const;
+  constexpr void SetValue(ValueType value);
 
  private:
   friend class AtomicFlags<Enum>;
@@ -58,7 +59,7 @@ constexpr bool operator==(Enum, Flags<Enum>);
 template <typename Enum>
 constexpr bool operator!=(Enum, Flags<Enum>);
 
-/// @ingroup userver_containers
+/// @ingroup userver_universal userver_containers
 ///
 /// @brief Wrapper to extend enum with atomic flags interface
 template <typename Enum>
@@ -182,6 +183,11 @@ constexpr bool Flags<Enum>::operator!=(Flags rhs) const {
 template <typename Enum>
 constexpr typename Flags<Enum>::ValueType Flags<Enum>::GetValue() const {
   return this->value_;
+}
+
+template <typename Enum>
+constexpr void Flags<Enum>::SetValue(typename Flags<Enum>::ValueType value) {
+  this->value_ = value;
 }
 
 template <typename Enum>

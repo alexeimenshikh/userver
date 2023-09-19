@@ -88,11 +88,10 @@ class SentinelImplBase {
   virtual void SetReplicationMonitoringSettings(
       const ReplicationMonitoringSettings& replication_monitoring_settings) = 0;
   virtual void SetClusterAutoTopology(bool /*auto_topology*/) {}
-
-  static bool AdjustDeadline(
-      const SentinelCommand& scommand,
-      const dynamic_config::Source& dynamic_config_source);
 };
+
+bool AdjustDeadline(const SentinelImplBase::SentinelCommand& scommand,
+                    const dynamic_config::Snapshot& config);
 
 class SentinelImpl : public SentinelImplBase {
  public:

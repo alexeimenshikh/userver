@@ -7,7 +7,6 @@ import typing
 
 from aiohttp import client_exceptions as exceptions
 import pytest
-
 from pytest_userver import chaos
 
 from testsuite.utils import http
@@ -215,62 +214,52 @@ def _check_deadline_propagation_response(response):
     assert isinstance(response, http.ClientResponse)
     assert DP_DEADLINE_EXPIRED in response.headers
     # Check that the status code is taken from deadline_expired_status_code.
-    assert response.status == 498
+    assert response.status == 504
     # Check that the error format is customizable
     # by GetFormattedExternalErrorBody.
     assert 'application/json' in response.headers['content-type']
     assert response.json()['message'] == 'Deadline expired'
 
 
-async def test_deadline_immediately_expired(call, gate, testpoint):
-    testpoint_data = []
+@pytest.fixture
+async def handler_metrics(monitor_client, gate):
+    # Give metrics and logs from the previous tests some time
+    # to be written out asynchronously.
+    await asyncio.sleep(0.1)
+    return monitor_client.metrics_diff(
+        prefix='http.handler.total', diff_gauge=True,
+    )
 
+
+async def test_deadline_immediately_expired(
+        call, gate, testpoint, service_client, handler_metrics,
+):
     @testpoint('testpoint_request')
-    async def _hook(data):
-        testpoint_data.append(data)
+    async def test(_data):
+        pass
 
-    gate.to_server_smaller_parts(DATA_PARTS_MAX_SIZE, sleep_per_packet=0.03)
+    # Avoid 'prepare' being accounted in the client metrics diff.
+    await service_client.update_server_state()
 
-    response = await call(
-        headers={DP_TIMEOUT_MS: '20'}, timeout=INCREASED_TIMEOUT,
+    async with handler_metrics:
+        gate.to_server_smaller_parts(
+            DATA_PARTS_MAX_SIZE, sleep_per_packet=0.03,
+        )
+        response = await call(
+            headers={DP_TIMEOUT_MS: '20'}, timeout=INCREASED_TIMEOUT,
+        )
+        _check_deadline_propagation_response(response)
+        assert (
+            test.times_called == 0
+        ), 'Control flow should NOT enter the handler body'
+        gate.to_server_pass()
+
+    assert handler_metrics.value_at('rps') == 1
+    assert (
+        handler_metrics.value_at(
+            'reply-codes', {'http_code': '504', 'version': '2'},
+        )
+        == 1
     )
-    _check_deadline_propagation_response(response)
-    assert not testpoint_data, 'Control flow should NOT enter the handler body'
-
-
-async def test_deadline_expired(call, testpoint, monitor_client):
-    testpoint_data = []
-
-    @testpoint('testpoint_request')
-    async def _hook(data):
-        testpoint_data.append(data)
-
-    # TODO(TAXICOMMON-6876) make service_client.reset_metric()
-    #  work for RegisterWriter metrics
-    cancelled_metric_before = await monitor_client.single_metric(
-        path='http.handler.total.cancelled-by-deadline',
-    )
-
-    response = await call(
-        htype='sleep',
-        headers={DP_TIMEOUT_MS: '150'},
-        timeout=INCREASED_TIMEOUT,
-    )
-    _check_deadline_propagation_response(response)
-    assert testpoint_data, 'Control flow SHOULD enter the handler body'
-
-    cancelled_metric_after = await monitor_client.single_metric(
-        path='http.handler.total.cancelled-by-deadline',
-    )
-    assert cancelled_metric_after.value - cancelled_metric_before.value == 1
-
-
-@pytest.mark.config(USERVER_DEADLINE_PROPAGATION_ENABLED=False)
-async def test_deadline_propagation_disabled_dynamically(call):
-    response = await call(
-        htype='sleep',
-        headers={DP_TIMEOUT_MS: '10'},
-        timeout=INCREASED_TIMEOUT,
-    )
-    assert isinstance(response, http.ClientResponse)
-    assert response.status == 200
+    assert handler_metrics.value_at('deadline-received') == 1
+    assert handler_metrics.value_at('cancelled-by-deadline') == 1

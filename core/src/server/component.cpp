@@ -9,11 +9,24 @@ USERVER_NAMESPACE_BEGIN
 
 namespace components {
 
+namespace {
+const storages::secdist::SecdistConfig& GetSecdist(
+    const components::ComponentContext& component_context) {
+  auto* component =
+      component_context.FindComponentOptional<components::Secdist>();
+  if (component) return component->Get();
+
+  static storages::secdist::SecdistConfig kEmpty;
+  return kEmpty;
+}
+}  // namespace
+
 Server::Server(const components::ComponentConfig& component_config,
                const components::ComponentContext& component_context)
     : LoggableComponentBase(component_config, component_context),
       server_(std::make_unique<server::Server>(
-          component_config.As<server::ServerConfig>(), component_context)) {
+          component_config.As<server::ServerConfig>(),
+          GetSecdist(component_context), component_context)) {
   auto& statistics_storage =
       component_context.FindComponent<StatisticsStorage>().GetStorage();
   server_statistics_holder_ = statistics_storage.RegisterWriter(
@@ -68,7 +81,7 @@ properties:
         description: set to logger name from components::Logging component to write access logs in TSKV format into it; do not set to avoid writing access logs
     max_response_size_in_flight:
         type: integer
-        description: set it to the size of response in bytes and the component will drop bigger responses from handlers that allow trottling
+        description: set it to the size of response in bytes and the component will drop bigger responses from handlers that allow throttling
     server-name:
         type: string
         description: value to send in HTTP Server header
@@ -97,6 +110,20 @@ properties:
                 type: integer
                 description: max count of new connections pending acceptance
                 defaultDescription: 1024
+            tls:
+                type: object
+                description: TLS settings
+                additionalProperties: false
+                properties:
+                    cert:
+                        type: string
+                        description: path to TLS certificate
+                    private-key:
+                        type: string
+                        description: path to TLS certificate private key
+                    private-key-passphrase-name:
+                        type: string
+                        description: passphrase name located in secdist
             handler-defaults:
                 type: object
                 description: handler defaults options
@@ -127,7 +154,7 @@ properties:
                     deadline_expired_status_code:
                         type: integer
                         description: the HTTP status code to return if the request deadline expires
-                        defaultDescription: 504
+                        defaultDescription: 498
                         minimum: 400
                         maximum: 599
             connection:
@@ -141,7 +168,7 @@ properties:
                         defaultDescription: 32 * 1024
                     requests_queue_size_threshold:
                         type: integer
-                        description: drop requests from handlers that allow trottling if there's more pending requests than allowed by this value
+                        description: drop requests from handlers that allow throttling if there's more pending requests than allowed by this value
                         defaultDescription: 100
                     keepalive_timeout:
                         type: integer

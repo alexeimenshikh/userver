@@ -20,6 +20,15 @@ USERVER_NAMESPACE_BEGIN
 
 namespace ugrpc::server {
 
+namespace impl {
+
+std::string FormatLogMessage(
+    const std::multimap<grpc::string_ref, grpc::string_ref>& metadata,
+    std::string_view peer, std::chrono::system_clock::time_point start_time,
+    std::string_view call_name, int code);
+
+}
+
 /// @brief A non-typed base class for any gRPC call
 class CallAnyBase {
  public:
@@ -42,6 +51,8 @@ class CallAnyBase {
   std::string_view GetCallName() const { return params_.call_name; }
 
   tracing::Span& GetSpan() { return params_.call_span; }
+
+  virtual bool IsFinished() const = 0;
 
   /// @cond
   // For internal use only
@@ -89,6 +100,8 @@ class UnaryCall final : public CallAnyBase {
   UnaryCall& operator=(UnaryCall&&) = delete;
   ~UnaryCall();
 
+  bool IsFinished() const override;
+
  private:
   impl::RawResponseWriter<Response>& stream_;
   bool is_finished_{false};
@@ -133,6 +146,8 @@ class InputStream final : public CallAnyBase {
   InputStream(InputStream&&) = delete;
   InputStream& operator=(InputStream&&) = delete;
   ~InputStream();
+
+  bool IsFinished() const override;
 
  private:
   enum class State { kOpen, kReadsDone, kFinished };
@@ -189,6 +204,8 @@ class OutputStream final : public CallAnyBase {
   OutputStream(OutputStream&&) = delete;
   OutputStream& operator=(OutputStream&&) = delete;
   ~OutputStream();
+
+  bool IsFinished() const override;
 
  private:
   enum class State { kNew, kOpen, kFinished };
@@ -252,6 +269,8 @@ class BidirectionalStream : public CallAnyBase {
   BidirectionalStream(BidirectionalStream&&) = delete;
   ~BidirectionalStream();
 
+  bool IsFinished() const override;
+
  private:
   enum class State { kOpen, kReadsDone, kFinished };
 
@@ -293,6 +312,11 @@ void UnaryCall<Response>::FinishWithError(const grpc::Status& status) {
   impl::FinishWithError(stream_, status, GetCallName());
   Statistics().OnExplicitFinish(status.error_code());
   ugrpc::impl::UpdateSpanWithStatus(GetSpan(), status);
+}
+
+template <typename Response>
+bool UnaryCall<Response>::IsFinished() const {
+  return is_finished_;
 }
 
 template <typename Request, typename Response>
@@ -342,6 +366,11 @@ void InputStream<Request, Response>::FinishWithError(
   impl::FinishWithError(stream_, status, GetCallName());
   Statistics().OnExplicitFinish(status.error_code());
   ugrpc::impl::UpdateSpanWithStatus(GetSpan(), status);
+}
+
+template <typename Request, typename Response>
+bool InputStream<Request, Response>::IsFinished() const {
+  return state_ == State::kFinished;
 }
 
 template <typename Response>
@@ -409,6 +438,11 @@ void OutputStream<Response>::WriteAndFinish(const Response& response) {
   const auto status = grpc::Status::OK;
   LogFinish(status);
   impl::WriteAndFinish(stream_, response, write_options, status, GetCallName());
+}
+
+template <typename Response>
+bool OutputStream<Response>::IsFinished() const {
+  return state_ == State::kFinished;
 }
 
 template <typename Request, typename Response>
@@ -485,6 +519,11 @@ void BidirectionalStream<Request, Response>::WriteAndFinish(
   const auto status = grpc::Status::OK;
   LogFinish(status);
   impl::WriteAndFinish(stream_, response, write_options, status, GetCallName());
+}
+
+template <typename Request, typename Response>
+bool BidirectionalStream<Request, Response>::IsFinished() const {
+  return state_ == State::kFinished;
 }
 
 }  // namespace ugrpc::server

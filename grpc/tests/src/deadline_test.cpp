@@ -9,7 +9,6 @@
 #include <userver/engine/task/task_with_result.hpp>
 #include <userver/server/request/task_inherited_data.hpp>
 #include <userver/utils/algo.hpp>
-#include <userver/utils/impl/userver_experiments.hpp>
 
 #include <ugrpc/client/impl/client_configs.hpp>
 #include <ugrpc/client/middlewares/deadline_propagation/middleware.hpp>
@@ -87,17 +86,14 @@ class UnitTestDeadlinePropagationService final
   }
 
   void WriteMany(WriteManyCall& call) override {
-    bool res = false;
     sample::ugrpc::StreamGreetingRequest request;
+    std::size_t reads{0};
 
-    size_t reads{0};
-
-    while ((res = call.Read(request))) {
-      EXPECT_EQ(request.name(), kRequests[reads++]);
+    while (call.Read(request)) {
+      ASSERT_LT(reads, std::size(kRequests));
+      EXPECT_EQ(request.name(), kRequests[reads]);
+      ++reads;
     }
-
-    EXPECT_FALSE(res);
-    ASSERT_GE(reads, 2);
 
     sample::ugrpc::StreamGreetingResponse response;
     response.set_name("Hello " + request.name());
@@ -142,15 +138,13 @@ class GrpcDeadlinePropagation
         long_deadline_(engine::Deadline::FromDuration(tests::kLongTimeout)),
         client_(MakeClient<ClientType>()) {
     tests::InitTaskInheritedDeadline(client_deadline_);
-    experiments_.Set(utils::impl::kGrpcClientDeadlinePropagationExperiment,
-                     true);
-    experiments_.Set(utils::impl::kGrpcServerDeadlinePropagationExperiment,
-                     true);
   }
 
   ClientType& Client() { return client_; }
 
-  void WaitClientDeadline() { tests::WaitUntilRpcDeadline(client_deadline_); }
+  void WaitClientDeadline() {
+    tests::WaitUntilRpcDeadlineClient(client_deadline_);
+  }
 
   ~GrpcDeadlinePropagation() override {
     EXPECT_TRUE(client_deadline_.IsReached());
@@ -161,7 +155,6 @@ class GrpcDeadlinePropagation
   engine::Deadline client_deadline_;
   engine::Deadline long_deadline_;
   ClientType client_;
-  utils::impl::UserverExperimentsScope experiments_;
 };
 
 }  // namespace
@@ -366,17 +359,12 @@ class GrpcTestClientNotSendData
  public:
   using ClientType = sample::ugrpc::UnitTestServiceClient;
 
-  GrpcTestClientNotSendData() : client_(MakeClient<ClientType>()) {
-    experiments_.Set(utils::impl::kGrpcClientDeadlinePropagationExperiment,
-                     true);
-    experiments_.Set(utils::impl::kGrpcServerDeadlinePropagationExperiment,
-                     true);
-  }
+  GrpcTestClientNotSendData() : client_(MakeClient<ClientType>()) {}
+
   ClientType& Client() { return client_; }
 
  private:
   ClientType client_;
-  utils::impl::UserverExperimentsScope experiments_;
 };
 
 }  // namespace
@@ -389,7 +377,7 @@ UTEST_F(GrpcTestClientNotSendData, TestClientDoNotStartCallWithoutDeadline) {
   request.set_name("userver");
 
   // Wait for deadline before request
-  tests::WaitUntilRpcDeadline(task_deadline);
+  tests::WaitUntilRpcDeadlineClient(task_deadline);
   // Context deadline not set
   auto call = Client().SayHello(request, tests::GetContext(false));
 
@@ -405,7 +393,7 @@ UTEST_F(GrpcTestClientNotSendData, TestClientDoNotStartCallWithDeadline) {
   request.set_name("userver");
 
   // Wait for deadline before request
-  tests::WaitUntilRpcDeadline(task_deadline);
+  tests::WaitUntilRpcDeadlineClient(task_deadline);
   // Set additional client deadline
   auto call = Client().SayHello(request, tests::GetContext(true));
 

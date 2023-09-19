@@ -46,7 +46,7 @@ class unexpected {
 template <class E>
 unexpected(E) -> unexpected<E>;
 
-/// @ingroup userver_containers
+/// @ingroup userver_universal userver_containers
 ///
 /// @brief For holding a value or an error
 template <class S, class E>
@@ -170,7 +170,7 @@ E& expected<S, E>::error() {
 
 template <class S, class E>
 const E& expected<S, E>::error() const {
-  const unexpected<E>* result = std::get_if<unexpected<E>>(data_);
+  const unexpected<E>* result = std::get_if<unexpected<E>>(&data_);
   if (result == nullptr) {
     throw bad_expected_access(
         "Trying to get undefined error value from utils::expected");

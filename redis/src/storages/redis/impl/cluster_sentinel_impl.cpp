@@ -104,16 +104,18 @@ inline void InvokeCommand(CommandPtr command, ReplyPtr&& reply) {
   LOG_DEBUG() << "redis_request( " << CommandSpecialPrinter{command}
               << " ):" << (reply->status == ReplyStatus::kOk ? '+' : '-') << ":"
               << reply->time * 1000.0 << " cc: " << command->control.ToString()
-              << command->log_extra;
+              << command->GetLogExtra();
   ++command->invoke_counter;
   try {
     command->callback(command, reply);
   } catch (const std::exception& ex) {
+    UASSERT(!engine::current_task::IsTaskProcessorThread());
     LOG_WARNING() << "exception in command->callback, cmd=" << reply->cmd << " "
-                  << ex << command->log_extra;
+                  << ex << command->GetLogExtra();
   } catch (...) {
+    UASSERT(!engine::current_task::IsTaskProcessorThread());
     LOG_WARNING() << "exception in command->callback, cmd=" << reply->cmd
-                  << command->log_extra;
+                  << command->GetLogExtra();
   }
 }
 
@@ -214,7 +216,11 @@ class ClusterTopologyHolder {
   void SendUpdateClusterTopology() { update_topology_watch_.Send(); }
 
   std::shared_ptr<Redis> GetRedisInstance(const std::string& host_port) const {
-    return std::const_pointer_cast<Redis>(nodes_.Get(host_port)->Get());
+    const auto connection = nodes_.Get(host_port);
+    if (!connection) {
+      return {};
+    }
+    return std::const_pointer_cast<Redis>(connection->Get());
   }
 
   void GetStatistics(SentinelStatistics& stats,
@@ -498,9 +504,14 @@ void ClusterTopologyHolder::UpdateClusterTopology() {
           }
         }
 
-        topology_.Assign(ClusterTopology(
-            ++current_topology_version_, std::chrono::steady_clock::now(),
-            std::move(shard_infos), password_, redis_thread_pool_, nodes_));
+        try {
+          topology_.Assign(ClusterTopology(
+              ++current_topology_version_, std::chrono::steady_clock::now(),
+              std::move(shard_infos), password_, redis_thread_pool_, nodes_));
+        } catch (const rcu::MissingKeyException& e) {
+          LOG_WARNING() << "Failed to update cluster topology: " << e;
+          return;
+        }
         is_topology_received_ = true;
 
         LOG_DEBUG() << "Cluster topology updated to version"
@@ -590,7 +601,7 @@ void ClusterSentinelImpl::Init() { topology_holder_->Init(); }
 
 void ClusterSentinelImpl::AsyncCommand(const SentinelCommand& scommand,
                                        size_t prev_instance_idx) {
-  if (!AdjustDeadline(scommand, dynamic_config_source_)) {
+  if (!AdjustDeadline(scommand, dynamic_config_source_.GetSnapshot())) {
     auto reply = std::make_shared<Reply>("", ReplyData::CreateNil());
     reply->status = ReplyStatus::kTimeoutError;
     InvokeCommand(scommand.command, std::move(reply));
@@ -694,7 +705,7 @@ void ClusterSentinelImpl::AsyncCommand(const SentinelCommand& scommand,
       false, !master));
 
   const auto topology = topology_holder_->GetTopology();
-  auto master_shard = topology->GetClusterShardByIndex(shard);
+  const auto& master_shard = topology->GetClusterShardByIndex(shard);
   if (!master_shard.AsyncCommand(command_check_errors)) {
     scommand.command->args = std::move(command_check_errors->args);
     AsyncCommandFailed(scommand);
