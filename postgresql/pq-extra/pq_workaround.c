@@ -310,7 +310,7 @@ static void pqxParseInput3(PGconn* conn) {
              */
             if (conn->cmd_queue_head &&
                 conn->cmd_queue_head->queryclass == PGQUERY_SIMPLE)
-              pqCommandQueueAdvance(conn);
+              pqCommandQueueAdvance(conn, true, false);
 #else
           {
 #endif
@@ -351,7 +351,7 @@ static void pqxParseInput3(PGconn* conn) {
 #if PG_VERSION_NUM >= 140000
           if (conn->cmd_queue_head &&
               conn->cmd_queue_head->queryclass == PGXQUERY_BIND) {
-            pqCommandQueueAdvance(conn);
+            pqCommandQueueAdvance(conn, false, false);
 #else
           if (conn->queryclass == PGXQUERY_BIND) {
 #endif
@@ -377,7 +377,7 @@ static void pqxParseInput3(PGconn* conn) {
            */
           if (conn->cmd_queue_head &&
               conn->cmd_queue_head->queryclass == PGQUERY_CLOSE) {
-            pqCommandQueueAdvance(conn);
+            pqCommandQueueAdvance(conn, false, false);
           }
 #endif
           break;
@@ -746,7 +746,7 @@ PGresult* PQXgetResult(PGconn* conn) {
        */
       if (conn->cmd_queue_head &&
           conn->cmd_queue_head->queryclass != PGQUERY_SIMPLE)
-        pqCommandQueueAdvance(conn);
+        pqCommandQueueAdvance(conn, false, false);
       res = pqPrepareAsyncResult(conn);
       if (conn->pipelineStatus != PQ_PIPELINE_OFF) {
         /*
@@ -810,7 +810,7 @@ PGresult* PQXgetResult(PGconn* conn) {
       conn->asyncStatus = PGASYNC_PIPELINE_IDLE;
     } else
       /* we won't ever see the Close */
-      pqCommandQueueAdvance(conn);
+      pqCommandQueueAdvance(conn, true, true);
   }
 #endif
 
